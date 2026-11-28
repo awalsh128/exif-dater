@@ -7,11 +7,11 @@
 <title>EXIF Dater</title>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
-<script src="app.js" defer></script>
+<script type="module" src="main.js"></script>
 </head>
 <body>
 <header>
-  <strong class="brand"><img src="icon.svg" alt="" width="28" height="28">EXIF Dater</strong>
+  <strong class="brand"><img src="icon.svg" alt="" width="28" height="28"><span>EXIF Dater</span></strong>
   <nav>
     <button id="show-review" aria-pressed="true">Review</button>
     <button id="show-quality" aria-pressed="false">Model quality</button>
@@ -28,17 +28,22 @@
 
 <div id="content">
 <main id="review">
-  <div class="toolbar">
-    <label>Model <select id="model"></select></label>
+  <div class="toolbar bar">
+    <label class="field">Model <select id="model"></select></label>
     <button id="analyze" class="primary">Analyze new photos</button>
-    <span id="new-photos" class="muted"></span>
+    <span id="new-photos" class="count"></span>
   </div>
-  <div class="toolbar">
+  <div class="toolbar actions">
     <strong id="progress"></strong>
+    <span id="pager">
+      <button id="page-previous" aria-label="Previous page" title="Previous page (left or up arrow)">‹</button>
+      <span id="page-position" role="status" title="Arrow keys change the page"></span>
+      <button id="page-next" aria-label="Next page" title="Next page (right or down arrow)">›</button>
+    </span>
     <button id="approve-high">Approve all high confidence</button>
     <button id="apply" class="primary">Write approved photos</button>
   </div>
-  <div id="groups"></div>
+  <div id="groups" class="gallery"></div>
 </main>
 
 <main id="quality" hidden>
@@ -76,6 +81,31 @@
   </div>
   <pre id="job-log"></pre>
 </section>
+
+<dialog id="viewer" aria-labelledby="viewer-title">
+  <div class="viewer-bar">
+    <strong id="viewer-title"></strong>
+    <span id="viewer-position" class="muted"></span>
+    <button id="viewer-zoom" aria-pressed="false">Actual size</button>
+    <button id="viewer-close">Close</button>
+  </div>
+  <div class="viewer-stage">
+    <button id="viewer-previous" aria-label="Previous photo" title="Previous photo (left arrow)">‹</button>
+    <div id="viewer-frame"><img id="viewer-image" alt=""></div>
+    <button id="viewer-next" aria-label="Next photo" title="Next photo (right arrow)">›</button>
+  </div>
+  <div class="viewer-panel">
+    <div><span id="viewer-confidence" class="badge"></span> <span id="viewer-reason" class="muted"></span></div>
+    <div class="controls">
+      <input id="viewer-date" placeholder="YYYY-MM-DD" size="12" aria-label="Date">
+      <input id="viewer-description" name="description" placeholder="Description (optional)"
+        aria-label="Description">
+      <label><input id="viewer-approved" type="checkbox"> Approve</label>
+      <button id="viewer-approve-next" class="primary">Approve and next</button>
+    </div>
+    <p id="viewer-message" role="status"></p>
+  </div>
+</dialog>
 
 <dialog id="help" aria-labelledby="help-title">
   <h2 id="help-title">Diagnose problems</h2>

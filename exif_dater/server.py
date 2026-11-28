@@ -9,69 +9,36 @@ from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import anthropic
 
 from exif_dater import prices
-from exif_dater.analyze import analyze, new_photos
+from exif_dater.analyze import analyze, needs_requests, new_photos, unnamed_photos
 from exif_dater.apply import apply
-from exif_dater.claude import ANALYSIS_EDGE, DEFAULT_MODEL, Analyzer, billing_problem, has_credentials
-from exif_dater.dates import date_from_name
+from exif_dater.claude import DEFAULT_MODEL, Analyzer, billing_problem, has_credentials
 from exif_dater.diagnose import check_credit, diagnose, sign_in
-from exif_dater.evaluate import Evaluation
+from exif_dater.evaluate import Evaluation, cached_dates
+from exif_dater.jobs import Job, Work
 from exif_dater.library import Library
 from exif_dater.photos import OUTPUT_DIR, list_photos, preview
-from exif_dater.truth import Truth, doubts, load_truth, read_entries, remove_entry, set_entry
+from exif_dater.truth import check_entries, load_truth, remove_entry, set_entry
 
 THUMBNAIL_EDGE = 640
+# For the viewer: enough to zoom in on a printed date stamp.
+VIEWER_EDGE = 3000
 
-# The only files served without a token. None of them holds anything private.
-_ASSETS = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-    "/style.css": ("style.css", "text/css; charset=utf-8"),
-    "/icon.svg": ("icon.svg", "image/svg+xml"),
+_CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".svg": "image/svg+xml",
 }
-
-Work = Callable[[Callable[[str], None], threading.Event], object]
-
-
-class _Job:
-    """A long task run in the background, whose progress the page polls."""
-
-    def __init__(self, kind: str, work: Work) -> None:
-        self.kind = kind
-        self.lines: list[str] = []
-        self.error = ""
-        self.result: object = None
-        self.stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, args=(work,))
-        self._thread.start()
-
-    @property
-    def running(self) -> bool:
-        return self._thread.is_alive()
-
-    def wait(self) -> None:
-        self._thread.join()
-
-    def state(self) -> dict:
-        # Read first, so a finished job is never reported with half its outcome.
-        running = self.running
-        return {
-            "kind": self.kind,
-            "running": running,
-            "lines": list(self.lines),
-            "error": self.error,
-            "result": self.result,
-        }
-
-    def _run(self, work: Work) -> None:
-        try:
-            self.result = work(self.lines.append, self.stop)
-        except Exception as error:  # noqa: BLE001 - anything that ends the thread has to reach the page.
-            self.error = str(error)
+_WEB = files("exif_dater").joinpath("web")
+# The page's own files, the only ones served without a token. None of them holds anything private.
+_ASSETS = {f"/{file.name}": file.name for file in _WEB.iterdir() if Path(file.name).suffix in _CONTENT_TYPES}
+_ASSETS["/"] = "index.html"
 
 
 class AppServer(ThreadingHTTPServer):
@@ -101,7 +68,7 @@ class AppServer(ThreadingHTTPServer):
         self.notes = notes
         self.today = today
         self.connect = connect  # Makes a client that sees the current sign-in.
-        self.job: _Job | None = None
+        self.job: Job | None = None
         self.credit: str | None = None  # As diagnose() takes it.
         self.lock = threading.Lock()  # Guards library and job.
 
@@ -128,7 +95,7 @@ class AppServer(ThreadingHTTPServer):
                 raise
 
         self.credit = None
-        self.job = _Job(kind, noting_credit)
+        self.job = Job(kind, noting_credit)
         return self.job.state()
 
     def server_close(self) -> None:
@@ -145,8 +112,8 @@ class _AppRequest(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path, query = self._target()
         if path in _ASSETS:
-            name, content_type = _ASSETS[path]
-            self._reply(files("exif_dater").joinpath("web", name).read_bytes(), content_type)
+            name = _ASSETS[path]
+            self._reply(_WEB.joinpath(name).read_bytes(), _CONTENT_TYPES[Path(name).suffix])
         elif not self._authorized(query):
             self.send_error(HTTPStatus.FORBIDDEN, "missing or wrong token")
         elif path == "/api/state":
@@ -167,7 +134,7 @@ class _AppRequest(BaseHTTPRequestHandler):
                 return
             self._reply_json(known)
         elif path == "/thumbnail":
-            edge = ANALYSIS_EDGE if "large" in query else THUMBNAIL_EDGE
+            edge = VIEWER_EDGE if "large" in query else THUMBNAIL_EDGE
             self._thumbnail(query.get("file", ""), edge)
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
@@ -236,10 +203,7 @@ class _AppRequest(BaseHTTPRequestHandler):
         library = server.library
         model = self._listed(body["model"])
         new = new_photos(library)
-        needs_model = any(not date_from_name(file, server.today()) for file in new) or any(
-            not library.observations[file].from_name for file in library.ungrouped()
-        )
-        if needs_model:
+        if needs_requests(library, unnamed_photos(new, server.today())):
             self._require_credentials()
 
         def work(log: Callable[[str], None], stop: threading.Event) -> None:
@@ -319,28 +283,13 @@ class _AppRequest(BaseHTTPRequestHandler):
         return self._known_dates(body)
 
     def _known_dates(self, choices: dict) -> dict:
-        """The known dates with the reasons to doubt each, and the photos that have none."""
         server = self.server
-        today = server.today()
+
+        def estimates(photos: list[str]) -> dict[str, list[str]]:
+            return cached_dates(server.library, photos, server.notes)
+
         within = int(choices.get("within", 2))
-        entries, source = read_entries(server.library)
-        photos = list_photos(server.library.root)
-        present = set(photos)
-        # Answers from earlier tests, which cost nothing to look at again.
-        usable = {entry.file: entry.date for entry in entries if entry.file in present}
-        estimates = Evaluation(
-            server.library, Truth(usable, source), prices.LISTED_MODELS, server.notes
-        ).cached_dates()
-        checked = []
-        for entry in entries:
-            if entry.file in present:
-                found = doubts(entry, today, estimates.get(entry.file, []), within)
-            else:
-                found = ["Not in the photo folder. Remove it."]
-            checked.append(asdict(entry) | {"present": entry.file in present, "doubts": found})
-        listed = {entry.file for entry in entries}
-        unlisted = [file for file in photos if file not in listed]
-        return {"source": source, "entries": checked, "unlisted": unlisted}
+        return check_entries(server.library, server.today(), within, estimates)
 
     def _listed(self, model: str) -> str:
         # The page offers only priced models, so its cost estimates always apply.
@@ -366,7 +315,7 @@ class _AppRequest(BaseHTTPRequestHandler):
         return {
             "groups": [asdict(group) for group in library.groups],
             "new_photos": len(new),
-            "photos_to_send": sum(not date_from_name(file, server.today()) for file in new),
+            "photos_to_send": len(unnamed_photos(new, server.today())),
             "default_model": DEFAULT_MODEL,
             "default_comparison": prices.DEFAULT_COMPARISON,
             "models": [

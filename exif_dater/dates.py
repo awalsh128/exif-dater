@@ -9,6 +9,8 @@ from pathlib import PurePosixPath
 FIRST_PHOTO_YEAR = 1826
 
 _DATE_SHAPE = re.compile(r"\d{4}(-\d{2}(-\d{2})?)?")
+# What completes a date of each precision into the first day of its period.
+_FIRST_DAY = {len("YYYY"): "-01-01", len("YYYY-MM"): "-01", len("YYYY-MM-DD"): ""}
 # A name that starts with a year, optionally followed by a separated month and day, such as "1987 beach"
 # or "1987-06-14-0002". Unseparated digits are left alone: scanners and cameras number files that way.
 _LEADING_DATE = re.compile(r"(\d{4})(?:[-_ .](\d{2})(?:[-_ .](\d{2}))?)?(?:\D|$)")
@@ -24,8 +26,7 @@ def parse_photo_date(text: str, today: date) -> PhotoDate:
     """Parse YYYY, YYYY-MM or YYYY-MM-DD, no later than today. Raise ValueError otherwise."""
     if not _DATE_SHAPE.fullmatch(text):
         raise ValueError(f"date {text!r} is not YYYY, YYYY-MM or YYYY-MM-DD")
-    padded = text + "-01-01"[len(text) - 4 :]
-    day = date.fromisoformat(padded)
+    day = date.fromisoformat(text + _FIRST_DAY[len(text)])
     if day.year < FIRST_PHOTO_YEAR or day > today:
         raise ValueError(f"date {text!r} is outside {FIRST_PHOTO_YEAR} to today")
     return PhotoDate(day, day_known=len(text) == len("YYYY-MM-DD"))

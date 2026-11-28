@@ -3,10 +3,12 @@
 import threading
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
 
 import anthropic
 
 from exif_dater.claude import ANALYSIS_EDGE, BILLING_URL, Analyzer, billing_problem
+from exif_dater.dates import date_from_name
 from exif_dater.library import Library, Observation
 from exif_dater.photos import list_photos, preview
 
@@ -74,6 +76,17 @@ def run_requests[Item, Result](
 
 def _fails_every_request(error: Exception) -> bool:
     return isinstance(error, anthropic.AuthenticationError) or billing_problem(error) is not None
+
+
+def unnamed_photos(photos: list[str], today: date) -> list[str]:
+    """Return the photos whose names carry no date, which only the model can look at."""
+    return [file for file in photos if not date_from_name(file, today)]
+
+
+def needs_requests(library: Library, unnamed: list[str]) -> bool:
+    """Whether analyzing sends anything: photos to look at, or model observations still to group."""
+    ungrouped_from_model = any(not library.observations[file].from_name for file in library.ungrouped())
+    return bool(unnamed) or ungrouped_from_model
 
 
 def analyze(

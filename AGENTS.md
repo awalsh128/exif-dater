@@ -48,6 +48,10 @@ Every command needs `uv` and ImageMagick (`magick`); the web page also needs `ex
 `bin/exif-dater.js` only launches: app logic and the page (`exif_dater/web/`) live in the Python package,
 once. `package.json` `files` lists what `npx` installs, so add new runtime files there.
 
+The page is plain ES modules, one for each part of it, started by `web/main.js`; the server serves every
+HTML, script, style and SVG file in `web/`. A module that others react to takes listeners (`whenJobEnds`,
+`whenDecided`), which keeps imports one-way.
+
 ## Gotchas
 
 - A scan's file and EXIF timestamps are the scan date, so they are not evidence.

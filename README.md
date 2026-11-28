@@ -38,8 +38,9 @@ files, including those in subfolders.
 
 1. Choose **Analyze new photos**. It shows the estimated cost and waits for you to choose **Send** before any
    photo goes to the API. Each photo is sent with its path inside the folder.
-2. Check each group of photos, least certain first. Fix the date (`YYYY`, `YYYY-MM` or `YYYY-MM-DD`), add a
-   description if you like, and tick **Approve**. **Move to own group** separates a photo that doesn't belong.
+2. Check the gallery of groups, least certain first. Fix a date (`YYYY`, `YYYY-MM` or `YYYY-MM-DD`), add a
+   description if you like, and tick **Approve**. **Split** separates a photo that doesn't belong. The arrow
+   keys change the page. Click a photo for a closer look, where you can zoom in and **Approve and next**.
 3. Choose **Write approved photos**. Dated copies appear in `dated/` inside your photo folder.
 
 If something fails, choose **?** in the upper right. It checks the tools, the photo folder, your sign-in, your

@@ -27,20 +27,22 @@ BLIND_NAME = "photo.jpg"
 
 @dataclass
 class Score:
+    """How one model did. The counts start at zero and are added to as its answers are read."""
+
     model: str
     photos: int
-    failed: int
-    dated: int
-    exact_year: int
-    within: int
-    median_year_error: float | None
-    year_in_range: int
-    month_correct: int
-    month_known: int
+    failed: int = 0
+    dated: int = 0
+    exact_year: int = 0
+    within: int = 0
+    median_year_error: float | None = None
+    year_in_range: int = 0
+    month_correct: int = 0
+    month_known: int = 0
     # For each confidence level: [answers within the allowed error, answers].
-    by_confidence: dict[str, list[int]]
-    cost_per_100: float | None
-    meets_target: bool
+    by_confidence: dict[str, list[int]] = field(default_factory=dict)
+    cost_per_100: float | None = None
+    meets_target: bool = False
 
 
 @dataclass
@@ -142,7 +144,7 @@ class Evaluation:
         )
 
     def _score(self, model: str, within_years: int, target_percent: int, today: date) -> Score:
-        score = Score(model, len(self._truth.dates), 0, 0, 0, 0, None, 0, 0, 0, {}, None, False)
+        score = Score(model, photos=len(self._truth.dates))
         errors = []
         tokens = [0, 0]
         answered = 0
@@ -228,6 +230,13 @@ class Evaluation:
         temporary.touch(mode=0o600)
         temporary.write_text(json.dumps(self._cache, indent=2), encoding="utf-8")
         temporary.replace(self._cache_path)
+
+
+def cached_dates(library: Library, photos: list[str], notes: str = "") -> dict[str, list[str]]:
+    """Return what the listed models have already answered for each photo, without asking any."""
+    unknown = Truth(dict.fromkeys(photos, ""), "photos to look up")
+    evaluation = Evaluation(library, unknown, prices.LISTED_MODELS, notes)
+    return evaluation.cached_dates()
 
 
 def format_report(report: Report) -> str:

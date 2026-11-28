@@ -181,3 +181,11 @@ def test_main_accepts_a_separate_negative_time_zone(tmp_path, monkeypatch):
 
     with pytest.raises(SystemExit, match="not a directory"):
         main(["review", str(tmp_path / "missing"), "--tz", "-05:00"])
+
+
+@pytest.mark.parametrize("zone", ["-8", "-0800", "Z", "+25:00", "pacific"])
+def test_main_review_with_a_malformed_time_zone_explains(tmp_path, monkeypatch, zone):
+    monkeypatch.setattr("shutil.which", lambda tool: tool)
+
+    with pytest.raises(SystemExit, match="--tz must look like"):
+        main(["review", str(tmp_path / "missing"), f"--tz={zone}"])

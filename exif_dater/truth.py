@@ -2,7 +2,8 @@
 
 import csv
 import shutil
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -70,6 +71,29 @@ def read_entries(library: Library) -> tuple[list[Entry], str]:
     _, rows, source = _current(library)
     entries = {entry.file: entry for entry in map(_entry, rows)}
     return list(entries.values()), source
+
+
+def check_entries(
+    library: Library, today: date, within_years: int, estimates: Callable[[list[str]], dict[str, list[str]]]
+) -> dict:
+    """Return the known dates with the reasons to doubt each, and the photos that have none.
+
+    estimates takes photos and returns what tested models answered for each.
+    """
+    entries, source = read_entries(library)
+    photos = list_photos(library.root)
+    present = set(photos)
+    answered = estimates([entry.file for entry in entries if entry.file in present])
+    checked = []
+    for entry in entries:
+        if entry.file in present:
+            found = doubts(entry, today, answered.get(entry.file, []), within_years)
+        else:
+            found = ["Not in the photo folder. Remove it."]
+        checked.append(asdict(entry) | {"present": entry.file in present, "doubts": found})
+    listed = {entry.file for entry in entries}
+    unlisted = [file for file in photos if file not in listed]
+    return {"source": source, "entries": checked, "unlisted": unlisted}
 
 
 def set_entry(library: Library, file: str, taken: str, confirmed: bool, today: date) -> None:

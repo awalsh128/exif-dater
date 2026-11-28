@@ -2,19 +2,19 @@
 
 import argparse
 import json
-import re
 import secrets
 import shutil
 import sys
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import anthropic
 
 from exif_dater import prices
-from exif_dater.analyze import analyze, new_photos
+from exif_dater.analyze import analyze, needs_requests, new_photos
 from exif_dater.claude import DEFAULT_MODEL, Analyzer, has_credentials
+from exif_dater.diagnose import TOOLS
 from exif_dater.evaluate import Evaluation, format_report
 from exif_dater.library import Library
 from exif_dater.server import AppServer
@@ -83,7 +83,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _analyze(options: argparse.Namespace) -> None:
-    _require("magick", "imagemagick")
+    _require("magick")
     library = _open(options.directory)
     notes = _notes(options)
 
@@ -92,8 +92,7 @@ def _analyze(options: argparse.Namespace) -> None:
     library.save()
     print(f"dated {len(new) - len(unnamed)} photos from their names")
     client = anthropic.Anthropic()
-    needs_model = unnamed or any(not library.observations[file].from_name for file in library.ungrouped())
-    if needs_model and not has_credentials(client):
+    if needs_requests(library, unnamed) and not has_credentials(client):
         raise RuntimeError(NO_CREDENTIALS)
     if unnamed and not options.yes:
         _confirm(f"Send {len(unnamed)} photos to the Anthropic API? This is billed to your account.")
@@ -106,9 +105,9 @@ def _analyze(options: argparse.Namespace) -> None:
 
 
 def _review(options: argparse.Namespace) -> None:
-    _require("magick", "imagemagick")
-    _require("exiftool", "libimage-exiftool-perl")
-    if not re.fullmatch(r"[+-]\d{2}:\d{2}", options.tz):
+    _require("magick")
+    _require("exiftool")
+    if not _is_zone(options.tz):
         raise ValueError(f"--tz must look like -08:00, got {options.tz!r}")
     library = _open(options.directory)
     token = secrets.token_urlsafe()
@@ -118,7 +117,7 @@ def _review(options: argparse.Namespace) -> None:
 
 
 def _evaluate(options: argparse.Namespace) -> None:
-    _require("magick", "imagemagick")
+    _require("magick")
     library = _open(options.directory)
     truth = load_truth(library, options.truth, date.today())
     models = options.model or prices.DEFAULT_COMPARISON
@@ -139,6 +138,16 @@ def _evaluate(options: argparse.Namespace) -> None:
     print(format_report(report))
 
 
+def _is_zone(text: str) -> bool:
+    """Whether text is a time zone offset written as exiftool needs it, such as -08:00."""
+    try:
+        offset = datetime.strptime(text, "%z")
+    except ValueError:
+        return False
+    # The parser also accepts "Z" and "-0800", so require the text to read back unchanged.
+    return offset.strftime("%:z") == text
+
+
 def _confirm(question: str) -> None:
     if input(f"{question} [y/N] ").strip().lower() != "y":
         raise RuntimeError("cancelled, nothing was sent")
@@ -154,6 +163,7 @@ def _open(directory: Path) -> Library:
     return Library.open(directory)
 
 
-def _require(tool: str, package: str) -> None:
-    if not shutil.which(tool):
-        raise RuntimeError(f"{tool} not found, install it with: sudo apt install {package}")
+def _require(command: str) -> None:
+    if not shutil.which(command):
+        _, package = TOOLS[command]
+        raise RuntimeError(f"{command} not found, install it with: sudo apt install {package}")

@@ -13,8 +13,8 @@ import anthropic
 from exif_dater.claude import BILLING_URL, DEFAULT_MODEL, billing_problem, has_credentials
 from exif_dater.photos import list_photos
 
-# Command, name and Ubuntu package of each program the app runs.
-TOOLS = (("magick", "ImageMagick", "imagemagick"), ("exiftool", "ExifTool", "libimage-exiftool-perl"))
+# The name and Ubuntu package of each program the app runs, by command.
+TOOLS = {"magick": ("ImageMagick", "imagemagick"), "exiftool": ("ExifTool", "libimage-exiftool-perl")}
 # Long enough for a slow connection, short enough that the help panel doesn't appear stuck.
 CHECK_SECONDS = 15
 
@@ -43,7 +43,7 @@ def diagnose(
     credit is None when nothing is known, empty after a successful credit check, and otherwise the API's
     explanation of why it wouldn't bill the account. Nothing checked here costs money.
     """
-    findings = [_tool(*tool) for tool in TOOLS]
+    findings = [_tool(command) for command in TOOLS]
     findings += [_directory(root), _sign_in(client), _credit(credit)]
     if failed_run:
         findings.append(
@@ -114,7 +114,8 @@ def sign_in(log: Callable[[str], None], stop: threading.Event) -> None:
     log("Signed in.")
 
 
-def _tool(command: str, name: str, package: str) -> Finding:
+def _tool(command: str) -> Finding:
+    name, package = TOOLS[command]
     if shutil.which(command):
         return Finding(name, "ok", "Installed.")
     return Finding(name, "problem", "Not installed.", command=f"sudo apt install {package}")

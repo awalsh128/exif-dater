@@ -1,7 +1,9 @@
 import json
+import re
 import threading
 import urllib.error
 import urllib.request
+from importlib.resources import files
 
 import pytest
 from conftest import TODAY, FakeApi, client_for
@@ -10,6 +12,7 @@ from exif_dater.library import Library
 from exif_dater.server import AppServer
 
 TOKEN = "secret"
+IMPORT = re.compile(r'"\./([\w-]+\.js)"')
 
 
 @pytest.fixture
@@ -95,7 +98,7 @@ def finished_job(server):
 
 @pytest.mark.parametrize(
     ("path", "name"),
-    [("/", b"<title>"), ("/app.js", b"fetch("), ("/style.css", b"body"), ("/icon.svg", b"<svg")],
+    [("/", b"<title>"), ("/server.js", b"fetch("), ("/style.css", b"body"), ("/icon.svg", b"<svg")],
 )
 def test_page_assets_are_served(server, path, name):
     status, body = send(server, path)
@@ -251,3 +254,19 @@ def test_thumbnail_of_a_photo_not_yet_analyzed_is_served(server, write_photo, si
     status, body = send(server, f"/thumbnail?file=new.jpg{size}&token={TOKEN}")
 
     assert (status, body[:2]) == (200, b"\xff\xd8")
+
+
+def test_every_module_the_page_imports_is_served(server):
+    web = files("exif_dater").joinpath("web")
+    scripts = [file.name for file in web.iterdir() if file.name.endswith(".js")]
+    imported = {name for script in scripts for name in IMPORT.findall(web.joinpath(script).read_text())}
+
+    statuses = {name: send(server, f"/{name}")[0] for name in imported | {"main.js"}}
+
+    assert statuses == dict.fromkeys(statuses, 200)
+
+
+def test_file_outside_the_page_is_not_served_without_a_token(server):
+    status, _ = send(server, "/../server.py")
+
+    assert status == 403
