@@ -1,0 +1,23 @@
+[project]
+name = "exif-dater"
+version = "0.1.0"
+description = "Estimate when scanned photos were taken and write the dates into copies of them."
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = ["anthropic"]
+
+[project.scripts]
+exif-dater = "exif_dater.cli:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+extend-select = ["I", "B", "UP"]

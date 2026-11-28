@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Analyze photos",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "exif_dater",
+      "args": ["analyze", "${input:photoDirectory}"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Review photos",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "exif_dater",
+      "args": ["review", "${input:photoDirectory}"],
+      "console": "integratedTerminal"
+    }
+  ],
+  "inputs": [{ "id": "photoDirectory", "type": "promptString", "description": "Photo directory" }]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "exif-dater",
+  "version": "0.1.0",
+  "description": "Estimate when scanned photos were taken, approve the dates and write them into copies.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "exif-dater": "bin/exif-dater.js"
+  },
+  "files": [
+    "bin/",
+    "exif_dater/*.py",
+    "exif_dater/*.json",
+    "exif_dater/web/",
+    "pyproject.toml",
+    "uv.lock"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/launcher.test.js"
+  }
+}
