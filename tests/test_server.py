@@ -21,7 +21,10 @@ def api():
 def server(make_library, api):
     library = make_library("a.jpg")
     library.add_groups(["a.jpg"], [])
-    with AppServer(library, TOKEN, "-08:00", client_for(api), today=lambda: TODAY) as running:
+    client = client_for(api)
+    with AppServer(
+        library, TOKEN, "-08:00", client, today=lambda: TODAY, connect=lambda: client_for(api)
+    ) as running:
         thread = threading.Thread(target=running.serve_forever)
         thread.start()
         yield running
@@ -44,6 +47,9 @@ def send(server, path, body=None):
     [
         ("/api/state", None),
         ("/api/job", None),
+        ("/api/diagnose", None),
+        ("/api/check-credit", {}),
+        ("/api/sign-in", {}),
         ("/thumbnail?file=a.jpg&token=wrong", None),
         ("/api/apply", {}),
         ("/api/analyze", {"model": "claude-haiku-5-5"}),
@@ -135,3 +141,44 @@ def test_change_while_a_task_runs_is_a_conflict(server, api, write_photo):
     finished_job(server)
 
     assert status == 409
+
+
+LOW_CREDIT = (400, {"type": "invalid_request_error", "message": "Your credit balance is too low."})
+
+
+def diagnosed(server, title):
+    status, body = send(server, f"/api/diagnose?token={TOKEN}")
+    assert status == 200
+    return next((found for found in json.loads(body) if found["title"] == title), None)
+
+
+def test_diagnose_after_a_billing_failure_reports_the_credit(server, api, write_photo):
+    write_photo("new.jpg")
+    api.error = LOW_CREDIT
+    send(server, f"/api/analyze?token={TOKEN}", {"model": "claude-haiku-5-5"})
+    finished_job(server)
+
+    credit = diagnosed(server, "API credit")
+
+    assert credit["status"] == "problem"
+    assert diagnosed(server, "The last run didn't finish") is None
+
+
+def test_check_credit_after_adding_it_clears_the_problem(server, api):
+    server.credit = "Your credit balance is too low."
+
+    status, body = send(server, f"/api/check-credit?token={TOKEN}", {})
+
+    credit = next(found for found in json.loads(body) if found["title"] == "API credit")
+    assert (status, credit["status"], len(api.requests)) == (200, "ok", 1)
+
+
+def test_sign_in_runs_as_a_task_and_reconnects(server, monkeypatch):
+    monkeypatch.setattr("exif_dater.server.sign_in", lambda log, stop: log("Signed in."))
+    before = server.client
+
+    status, _ = send(server, f"/api/sign-in?token={TOKEN}", {})
+    job = finished_job(server)
+
+    assert (status, job["kind"], job["error"]) == (200, "sign-in", "")
+    assert server.client is not before

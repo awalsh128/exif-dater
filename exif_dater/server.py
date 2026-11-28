@@ -1,4 +1,4 @@
-"""The local web front end: analyze photos, approve dates, write copies and test models."""
+"""The local web front end: analyze photos, approve dates, write copies, test models and fix problems."""
 
 import hmac
 import json
@@ -16,8 +16,9 @@ import anthropic
 from exif_dater import prices
 from exif_dater.analyze import analyze, new_photos
 from exif_dater.apply import apply
-from exif_dater.claude import DEFAULT_MODEL, Analyzer, has_credentials
+from exif_dater.claude import DEFAULT_MODEL, Analyzer, billing_problem, has_credentials
 from exif_dater.dates import date_from_name
+from exif_dater.diagnose import check_credit, diagnose, sign_in
 from exif_dater.evaluate import Evaluation, load_truth
 from exif_dater.library import Library
 from exif_dater.photos import OUTPUT_DIR, preview
@@ -88,6 +89,7 @@ class AppServer(ThreadingHTTPServer):
         client: anthropic.Anthropic,
         notes: str = "",
         today: Callable[[], date] = date.today,
+        connect: Callable[[], anthropic.Anthropic] = anthropic.Anthropic,
     ) -> None:
         super().__init__(("127.0.0.1", 0), _AppRequest)
         self.library = library
@@ -96,13 +98,36 @@ class AppServer(ThreadingHTTPServer):
         self.client = client
         self.notes = notes
         self.today = today
+        self.connect = connect  # Makes a client that sees the current sign-in.
         self.job: _Job | None = None
+        self.credit: str | None = None  # As diagnose() takes it.
         self.lock = threading.Lock()  # Guards library and job.
 
     @property
     def url(self) -> str:
         host, port = self.server_address[:2]
         return f"http://{host}:{port}/?token={self.token}"
+
+    def reconnect(self) -> None:
+        """Pick up a sign-in made since the client was created, in this app or in a terminal."""
+        try:
+            self.client = self.connect()
+        except anthropic.AnthropicError:
+            pass  # The old client stays, and its next request reports what is wrong.
+
+    def start(self, kind: str, work: Work) -> dict:
+        """Run work in the background, noting whether it ran out of credit."""
+
+        def noting_credit(log: Callable[[str], None], stop: threading.Event) -> object:
+            try:
+                return work(log, stop)
+            except Exception as error:
+                self.credit = billing_problem(error) or billing_problem(error.__cause__)
+                raise
+
+        self.credit = None
+        self.job = _Job(kind, noting_credit)
+        return self.job.state()
 
     def server_close(self) -> None:
         if self.job:
@@ -129,6 +154,8 @@ class _AppRequest(BaseHTTPRequestHandler):
         elif path == "/api/job":
             job = self.server.job
             self._reply_json(job.state() if job else None)
+        elif path == "/api/diagnose":
+            self._reply_json(self._diagnosis())
         elif path == "/thumbnail":
             self._thumbnail(query.get("file", ""))
         else:
@@ -146,6 +173,8 @@ class _AppRequest(BaseHTTPRequestHandler):
             "/api/analyze": self._analyze,
             "/api/evaluate": self._evaluate,
             "/api/cancel": self._cancel,
+            "/api/sign-in": self._sign_in,
+            "/api/check-credit": self._check_credit,
         }
         if path not in actions:
             self.send_error(HTTPStatus.NOT_FOUND)
@@ -210,8 +239,7 @@ class _AppRequest(BaseHTTPRequestHandler):
             finally:
                 log(f"tokens used: {analyzer.input_tokens} input, {analyzer.output_tokens} output")
 
-        server.job = _Job("analyze", work)
-        return server.job.state()
+        return server.start("analyze", work)
 
     def _evaluate(self, body: dict) -> dict:
         server = self.server
@@ -226,14 +254,47 @@ class _AppRequest(BaseHTTPRequestHandler):
             report = evaluation.run(server.client, within, target, server.today(), log, stop)
             return asdict(report)
 
-        server.job = _Job("evaluate", work)
-        return server.job.state()
+        return server.start("evaluate", work)
 
     def _cancel(self, body: dict) -> dict | None:
         if not self.server.job:
             return None
         self.server.job.stop.set()
         return self.server.job.state()
+
+    def _sign_in(self, body: dict) -> dict:
+        server = self.server
+
+        def work(log: Callable[[str], None], stop: threading.Event) -> None:
+            sign_in(log, stop)
+            server.reconnect()
+
+        return server.start("sign-in", work)
+
+    def _check_credit(self, body: dict) -> list[dict]:
+        self.server.reconnect()
+        self.server.credit = check_credit(self.server.client)
+        return self._diagnosis()
+
+    # Not an action: it changes nothing the lock guards, and its API check shouldn't hold up the page.
+
+    def _diagnosis(self) -> list[dict]:
+        server = self.server
+        job = server.job.state() if server.job else None
+        if not job or not job["running"]:
+            server.reconnect()
+        failed = job["error"] if job and not job["running"] else ""
+        # A billing failure is already reported as a credit problem.
+        if server.credit:
+            failed = ""
+        findings = diagnose(
+            server.library.root,
+            server.client,
+            server.credit,
+            failed,
+            can_retry=bool(job) and job["kind"] == "analyze",
+        )
+        return [asdict(finding) for finding in findings]
 
     def _listed(self, model: str) -> str:
         # The page offers only priced models, so its cost estimates always apply.
@@ -243,9 +304,9 @@ class _AppRequest(BaseHTTPRequestHandler):
 
     def _require_credentials(self) -> None:
         if not has_credentials(self.server.client):
-            raise ValueError(
-                "no Claude API credentials, run ./setup.sh or set ANTHROPIC_API_KEY, then restart"
-            )
+            self.server.reconnect()
+        if not has_credentials(self.server.client):
+            raise ValueError("no Claude API credentials, use the help button (?) to sign in")
 
     def _state(self) -> dict:
         server = self.server

@@ -3,6 +3,8 @@
 const token = new URLSearchParams(location.search).get("token") ?? "";
 const confidenceOrder = { low: 0, medium: 1, high: 2 };
 const POLL_MILLISECONDS = 1000;
+const JOB_NAMES = { analyze: "Analysis", evaluate: "Model test", "sign-in": "Sign-in" };
+const STATUS_MARKS = { ok: "✓", unknown: "?", warning: "!", problem: "✕" };
 let state;
 
 const byId = (id) => document.getElementById(id);
@@ -96,13 +98,15 @@ function card(group) {
     return figure;
   });
 
-  const section = element("section", { className: group.approved ? "approved" : "" },
+  const section = element("section", { className: group.approved ? "card approved" : "card" },
     element("h2", {}, group.title),
-    element("div", {}, `${group.confidence} confidence: ${group.reason}`),
+    element("div", { className: "evidence" },
+      element("span", { className: `badge ${group.confidence}` }, `${group.confidence} confidence`),
+      ` ${group.reason}`),
     element("div", { className: "photos" }, ...photos),
     element("div", { className: "controls" },
       date, description, element("label", {}, approved, " Approve"),
-      element("span", {}, group.written ? "Written" : "")));
+      element("span", { className: "muted" }, group.written ? "Written" : "")));
   return section;
 }
 
@@ -118,7 +122,9 @@ function render() {
   // Least certain first, because those need attention.
   const sorted = [...state.groups].sort((a, b) =>
     confidenceOrder[a.confidence] - confidenceOrder[b.confidence] || a.id - b.id);
-  byId("groups").replaceChildren(...sorted.map(card));
+  const empty = element("p", { className: "empty" },
+    "No proposed dates yet. Choose Analyze new photos to start.");
+  byId("groups").replaceChildren(...(sorted.length ? sorted.map(card) : [empty]));
   showSummary();
 }
 
@@ -182,10 +188,14 @@ function showReport(result) {
 function showJob(job) {
   byId("job").hidden = !job;
   if (!job) return;
-  const name = job.kind === "analyze" ? "Analysis" : "Model test";
+  const name = JOB_NAMES[job.kind];
   const outcome = job.running ? "running" : job.error ? "stopped" : "finished";
   byId("job-title").textContent = `${name} ${outcome}`;
   byId("job-cancel").hidden = !job.running;
+  byId("job-close").hidden = job.running;
+  byId("job-diagnose").hidden = !job.error;
+  byId("job").classList.toggle("failed", Boolean(job.error));
+  byId("show-help").classList.toggle("attention", Boolean(job.error));
   byId("job-log").textContent = [...job.lines, job.error].filter(Boolean).join("\n");
   byId("job-log").scrollTop = byId("job-log").scrollHeight;
   if (job.kind === "evaluate" && job.result) showReport(job.result);
@@ -265,6 +275,97 @@ byId("apply").addEventListener("click", () => attempt(async () => {
     setBusy(false);
   }
 }));
+
+// The buttons that fix what a finding reports.
+const FIXES = {
+  "sign-in": { label: "Sign in with browser", run: signIn },
+  "check-credit": { label: "Test credit (costs under $0.01)", run: testCredit },
+  retry: { label: "Run the analysis again", run: retryAnalysis },
+};
+
+function showFindings(findings) {
+  byId("findings").replaceChildren(...findings.map((finding) => {
+    const body = element("div", {}, element("strong", {}, finding.title),
+      element("div", { className: "detail" }, finding.detail));
+    const fixes = element("div", { className: "fixes" });
+    if (finding.action) {
+      const { label, run } = FIXES[finding.action];
+      const button = element("button", { className: "primary", textContent: label });
+      button.addEventListener("click", () => helpAttempt(() => run(button)));
+      fixes.append(button);
+    }
+    if (finding.link) {
+      fixes.append(element("a", {
+        href: finding.link, target: "_blank", rel: "noreferrer", textContent: "Open billing page",
+      }));
+    }
+    if (finding.command) {
+      const copy = element("button", { textContent: "Copy" });
+      copy.addEventListener("click", () => helpAttempt(async () => {
+        await navigator.clipboard.writeText(finding.command);
+        copy.textContent = "Copied";
+      }));
+      fixes.append(element("span", {}, "Run in a terminal: "), element("code", {}, finding.command), copy);
+    }
+    if (fixes.hasChildNodes()) body.append(fixes);
+    const mark = element("span", { className: "mark", ariaLabel: finding.status }, STATUS_MARKS[finding.status]);
+    return element("li", { className: finding.status }, mark, body);
+  }));
+  const problems = findings.filter((finding) => ["problem", "warning"].includes(finding.status)).length;
+  byId("help-status").textContent = problems
+    ? `${problems} to fix.`
+    : "No problems found. Test the credit if requests are still refused.";
+  byId("show-help").classList.toggle("attention", problems > 0);
+}
+
+// Like attempt(), but reports inside the help panel, which covers the page's own status line.
+async function helpAttempt(action) {
+  try {
+    await action();
+  } catch (error) {
+    byId("help-status").textContent = error.message;
+  }
+}
+
+async function runDiagnosis() {
+  byId("help-status").textContent = "Checking...";
+  byId("findings").replaceChildren();
+  showFindings(await call("/api/diagnose"));
+}
+
+function openHelp() {
+  if (!byId("help").open) byId("help").showModal();
+  return helpAttempt(runDiagnosis);
+}
+
+async function signIn() {
+  const job = await call("/api/sign-in", {});
+  byId("help").close();
+  await follow(job);
+  await openHelp();
+}
+
+async function testCredit(button) {
+  button.disabled = true;
+  byId("help-status").textContent = "Testing...";
+  try {
+    showFindings(await call("/api/check-credit", {}));
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function retryAnalysis() {
+  byId("help").close();
+  byId("show-review").click();
+  byId("analyze").click();
+}
+
+byId("show-help").addEventListener("click", openHelp);
+byId("job-diagnose").addEventListener("click", openHelp);
+byId("help-again").addEventListener("click", () => helpAttempt(runDiagnosis));
+byId("help-close").addEventListener("click", () => byId("help").close());
+byId("job-close").addEventListener("click", () => { byId("job").hidden = true; });
 
 for (const view of ["review", "quality"]) {
   byId(`show-${view}`).addEventListener("click", () => {

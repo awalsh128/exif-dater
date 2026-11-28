@@ -42,6 +42,13 @@ files, including those in subfolders.
    description if you like, and tick **Approve**. **Move to own group** separates a photo that doesn't belong.
 3. Choose **Write approved photos**. Dated copies appear in `dated/` inside your photo folder.
 
+If something fails, choose **?** in the upper right. It checks the tools, the photo folder, your sign-in, your
+API credit and the last run, and offers the fix: sign in again, open the billing page, test the credit, copy
+an install command or retry. The credit test sends one tiny paid request, which costs under a cent.
+
+A rejected sign-in or a billing problem stops a run at once. Finished photos are kept, so run it again after
+fixing it.
+
 Press Ctrl+C in the terminal when you're done. Progress is saved in `.exif-dater.json` in the photo folder,
 so you can stop and come back.
 

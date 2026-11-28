@@ -4,41 +4,38 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Photo date review</title>
+<title>EXIF Dater</title>
 <link rel="stylesheet" href="style.css">
 <script src="app.js" defer></script>
 </head>
 <body>
 <header>
+  <strong class="brand">EXIF Dater</strong>
   <nav>
     <button id="show-review" aria-pressed="true">Review</button>
     <button id="show-quality" aria-pressed="false">Model quality</button>
   </nav>
   <span id="status" role="status"></span>
+  <button id="show-help" class="help" aria-label="Help: diagnose problems" title="Diagnose problems">?</button>
 </header>
 
 <div id="confirm" class="panel" hidden>
   <span id="confirm-question"></span>
-  <button id="confirm-yes">Send</button>
+  <button id="confirm-yes" class="primary">Send</button>
   <button id="confirm-no">Cancel</button>
 </div>
 
-<div id="job" class="panel" hidden>
-  <strong id="job-title"></strong>
-  <button id="job-cancel">Stop</button>
-  <pre id="job-log"></pre>
-</div>
-
+<div id="content">
 <main id="review">
   <div class="toolbar">
-    <span id="new-photos"></span>
     <label>Model <select id="model"></select></label>
-    <button id="analyze">Analyze new photos</button>
+    <button id="analyze" class="primary">Analyze new photos</button>
+    <span id="new-photos" class="muted"></span>
   </div>
   <div class="toolbar">
     <strong id="progress"></strong>
     <button id="approve-high">Approve all high confidence</button>
-    <button id="apply">Write approved photos</button>
+    <button id="apply" class="primary">Write approved photos</button>
   </div>
   <div id="groups"></div>
 </main>
@@ -47,14 +44,35 @@
   <p>Each chosen model dates photos whose dates you already know, without seeing their file names.
     List them in <code>truth.csv</code> in the photo directory (header <code>file,date</code>);
     otherwise your approved groups are used.</p>
-  <p id="truth"></p>
+  <p id="truth" class="muted"></p>
   <fieldset id="comparison"><legend>Models to test</legend></fieldset>
   <div class="toolbar">
     <label>Correct means within <input id="within" type="number" min="0" value="2"> years</label>
     <label>A model must get <input id="target" type="number" min="0" max="100" value="80"> % correct</label>
-    <button id="evaluate">Run test</button>
+    <button id="evaluate" class="primary">Run test</button>
   </div>
   <div id="report"></div>
 </main>
+</div>
+
+<section id="job" aria-label="Progress" hidden>
+  <div class="job-bar">
+    <strong id="job-title"></strong>
+    <button id="job-diagnose" hidden>Diagnose</button>
+    <button id="job-cancel">Stop</button>
+    <button id="job-close" hidden>Close</button>
+  </div>
+  <pre id="job-log"></pre>
+</section>
+
+<dialog id="help" aria-labelledby="help-title">
+  <h2 id="help-title">Diagnose problems</h2>
+  <p id="help-status" class="muted" role="status"></p>
+  <ul id="findings"></ul>
+  <div class="toolbar">
+    <button id="help-again" class="primary">Check again</button>
+    <button id="help-close">Close</button>
+  </div>
+</dialog>
 </body>
 </html>

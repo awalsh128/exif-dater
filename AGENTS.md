@@ -53,6 +53,10 @@ once. `package.json` `files` lists what `npx` installs, so add new runtime files
 - A scan's file and EXIF timestamps are the scan date, so they are not evidence.
 - `analyze` and `evaluate` send photos to the Anthropic API and bill the user: run them on real photos only
   when the user asks. Tests fake the API.
+- The help panel (`diagnose.py`) is plain code and free, except its credit test: no free endpoint says whether
+  the account can pay, so that button sends a one-token request (under a cent, not per photo).
+- A billing problem or rejected sign-in stops a run at the first one. The low-credit error is only
+  recognizable by its message (`billing_problem` in `claude.py`).
 - `evaluate` hides file names from the model, since a name may spell out the answer.
 - The package is private and unpublished. Run it by path (`npx .`): a bare `npx exif-dater` asks the public
   npm registry for that name.
