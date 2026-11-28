@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import anthropic
 
-from exif_dater.claude import ANALYSIS_EDGE, Analyzer
+from exif_dater.claude import ANALYSIS_EDGE, BILLING_URL, Analyzer, billing_problem
 from exif_dater.library import Library, Observation
 from exif_dater.photos import list_photos, preview
 
@@ -28,13 +28,25 @@ def run_requests[Item, Result](
     """Make requests in parallel and yield (item, result, error) as each finishes.
 
     A failed request doesn't stop the others. Once stop is set, no further request starts.
+
+    A rejected sign-in or a billing problem would fail every request, so the first one also stops new
+    requests. Those already sent are still yielded, then the error is raised: AuthenticationError for the
+    sign-in, RuntimeError for billing.
     """
+    halted = threading.Event()
 
     def unless_stopped(item: Item) -> Result:
-        if stop.is_set():
+        if stop.is_set() or halted.is_set():
             raise _Stopped
-        return request(item)
+        try:
+            return request(item)
+        except anthropic.APIError as error:
+            # Set here, in the worker, so that it takes no further item.
+            if _fails_every_request(error):
+                halted.set()
+            raise
 
+    fatal = None
     pool = ThreadPoolExecutor(PARALLEL_REQUESTS)
     try:
         futures = {pool.submit(unless_stopped, item): item for item in items}
@@ -43,14 +55,25 @@ def run_requests[Item, Result](
                 result = future.result()
             except _Stopped:
                 continue
-            except anthropic.AuthenticationError:
-                raise  # Every other request would fail the same way.
             except (anthropic.APIError, OSError, RuntimeError, ValueError) as error:
-                yield futures[future], None, error
+                if _fails_every_request(error):
+                    fatal = error
+                else:
+                    yield futures[future], None, error
                 continue
             yield futures[future], result, None
     finally:
         pool.shutdown(cancel_futures=True)
+    if isinstance(fatal, anthropic.AuthenticationError):
+        raise fatal
+    if fatal:
+        raise RuntimeError(
+            f"stopped at a billing problem: {billing_problem(fatal)} See {BILLING_URL}, then run it again."
+        ) from fatal
+
+
+def _fails_every_request(error: Exception) -> bool:
+    return isinstance(error, anthropic.AuthenticationError) or billing_problem(error) is not None
 
 
 def analyze(

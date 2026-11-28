@@ -13,6 +13,9 @@ from exif_dater.library import Group, Observation
 DEFAULT_MODEL = "claude-haiku-5-5"
 # The long edge sent to the model: enough to read printed date stamps at a modest token cost.
 ANALYSIS_EDGE = 1568
+BILLING_URL = "https://platform.claude.com/settings/billing"
+# An empty credit balance arrives as an ordinary invalid request, so only its wording identifies it.
+_LOW_CREDIT = "credit balance is too low"
 
 OBSERVE_PROMPT = """\
 This is a scan of a physical photograph. Estimate when the photo was taken.
@@ -90,6 +93,20 @@ _GROUPS_SCHEMA = _object_schema(
 
 def has_credentials(client: anthropic.Anthropic) -> bool:
     return bool(client.api_key or client.auth_token or client.credentials)
+
+
+def billing_problem(error: Exception) -> str | None:
+    """Return the API's explanation if error means the account can't pay for requests."""
+    if not isinstance(error, anthropic.APIStatusError):
+        return None
+    message = error.api_message or ""
+    unpaid = (
+        error.status_code == 402
+        or error.type == "billing_error"
+        or error.error_code == "enforced_spend_limit_reached"
+        or _LOW_CREDIT in message
+    )
+    return (message or str(error)) if unpaid else None
 
 
 class Analyzer:

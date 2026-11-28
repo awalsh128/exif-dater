@@ -1,9 +1,10 @@
 import threading
 
+import anthropic
 import pytest
 from conftest import TODAY, FakeApi, client_for
 
-from exif_dater.analyze import analyze
+from exif_dater.analyze import PARALLEL_REQUESTS, analyze
 from exif_dater.claude import DEFAULT_MODEL, Analyzer
 from exif_dater.cli import main
 from exif_dater.library import Library
@@ -68,6 +69,80 @@ def test_main_declined_confirmation_sends_nothing(tmp_path, write_photo, monkeyp
 
     with pytest.raises(SystemExit, match="nothing was sent"):
         main(["analyze", str(tmp_path)])
+
+
+LOW_CREDIT = (
+    400,
+    {"type": "invalid_request_error", "message": "Your credit balance is too low to access the API."},
+)
+MORE_PHOTOS_THAN_WORKERS = [f"{number}.jpg" for number in range(PARALLEL_REQUESTS * 3)]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        LOW_CREDIT,
+        (402, {"type": "billing_error", "message": "Payment failed."}),
+        (
+            429,
+            {
+                "type": "rate_limit_error",
+                "message": "You have reached your API usage limits.",
+                "details": {"error_code": "enforced_spend_limit_reached"},
+            },
+        ),
+    ],
+    ids=["low-credit", "billing-error", "spend-cap"],
+)
+def test_analyze_billing_problem_stops_sending_and_explains(make_library, write_photo, error):
+    library = make_library()
+    for file in MORE_PHOTOS_THAN_WORKERS:
+        write_photo(file)
+    api = FakeApi(error=error)
+    log = []
+
+    with pytest.raises(RuntimeError, match=f"billing problem: {error[1]['message']}.*settings/billing"):
+        analyze(analyzer_for(api), library, MORE_PHOTOS_THAN_WORKERS, log.append)
+
+    # Only requests already under way when the first one failed can have been sent.
+    assert 1 <= len(api.requests) <= PARALLEL_REQUESTS
+    assert log == []
+
+
+def test_analyze_billing_problem_midway_keeps_finished_photos(make_library, write_photo):
+    library = make_library()
+    for file in MORE_PHOTOS_THAN_WORKERS:
+        write_photo(file)
+    api = FakeApi(error=LOW_CREDIT, successes=1)
+
+    with pytest.raises(RuntimeError, match="billing problem"):
+        analyze(analyzer_for(api), library, MORE_PHOTOS_THAN_WORKERS, lambda line: None)
+
+    assert len(Library.open(library.root).observations) == 1
+
+
+def test_analyze_ordinary_request_error_tries_every_photo(make_library, write_photo):
+    library = make_library()
+    for file in MORE_PHOTOS_THAN_WORKERS:
+        write_photo(file)
+    api = FakeApi(error=(400, {"type": "invalid_request_error", "message": "Image is too large."}))
+
+    with pytest.raises(RuntimeError, match=f"{len(MORE_PHOTOS_THAN_WORKERS)} photos failed"):
+        analyze(analyzer_for(api), library, MORE_PHOTOS_THAN_WORKERS, lambda line: None)
+
+    assert len(api.requests) == len(MORE_PHOTOS_THAN_WORKERS)
+
+
+def test_analyze_rejected_sign_in_stops_sending(make_library, write_photo):
+    library = make_library()
+    for file in MORE_PHOTOS_THAN_WORKERS:
+        write_photo(file)
+    api = FakeApi(error=(401, {"type": "authentication_error", "message": "invalid key"}))
+
+    with pytest.raises(anthropic.AuthenticationError):
+        analyze(analyzer_for(api), library, MORE_PHOTOS_THAN_WORKERS, lambda line: None)
+
+    assert len(api.requests) <= PARALLEL_REQUESTS
 
 
 def test_list_photos_skips_output_hidden_and_other_files(tmp_path, write_photo):
