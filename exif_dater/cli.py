@@ -19,7 +19,7 @@ from exif_dater.evaluate import Evaluation, format_report, load_truth
 from exif_dater.library import Library
 from exif_dater.server import AppServer
 
-NO_CREDENTIALS = "no Claude API credentials, set ANTHROPIC_API_KEY and try again"
+NO_CREDENTIALS = "no Claude API credentials, run ./setup.sh or set ANTHROPIC_API_KEY, then try again"
 
 
 def main(arguments: list[str] | None = None) -> None:

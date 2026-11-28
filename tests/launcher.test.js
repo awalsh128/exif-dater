@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -10,7 +10,7 @@ const launcher = fileURLToPath(new URL("../bin/exif-dater.js", import.meta.url))
 const URL_LINE = "Review at http://127.0.0.1:4321/?token=abc-DEF_1";
 
 // Runs the launcher with stand-ins for uv and the other tools, which record how they were called.
-function launch(t, args, { missing = [], exitCode = 0 } = {}) {
+function launch(t, args, { missing = [], exitCode = 0, settings = null } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "launcher-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const record = join(directory, "uv-arguments");
@@ -26,12 +26,24 @@ function launch(t, args, { missing = [], exitCode = 0 } = {}) {
     writeFileSync(join(directory, name), `#!/bin/sh\n${body}\n`);
     chmodSync(join(directory, name), 0o755);
   }
+  const settingsFile = join(directory, "exif-dater", "env");
+  if (settings !== null) {
+    mkdirSync(join(directory, "exif-dater"));
+    writeFileSync(settingsFile, settings);
+  }
   const result = spawnSync(process.execPath, [launcher, ...args], {
     encoding: "utf8",
-    env: { PATH: directory, BROWSER: join(directory, "browser") },
+    // XDG_CONFIG_HOME keeps the tests away from the real saved key.
+    env: { PATH: directory, BROWSER: join(directory, "browser"), XDG_CONFIG_HOME: directory },
   });
   const forwarded = existsSync(record) ? readFileSync(record, "utf8").trimEnd().split("\n") : null;
-  return { ...result, forwarded: forwarded?.slice(forwarded.indexOf("exif-dater") + 1), opened };
+  return {
+    ...result,
+    forwarded: forwarded?.slice(forwarded.indexOf("exif-dater") + 1),
+    uvOptions: forwarded?.slice(0, forwarded.indexOf("exif-dater")),
+    settingsFile,
+    opened,
+  };
 }
 
 // The browser runs detached, so give it a moment to write.
@@ -70,6 +82,18 @@ test("launcher without a required tool explains how to install it", { skip: proc
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /exiftool not found.*libimage-exiftool-perl/);
+});
+
+test("launcher with a saved key file passes it to uv", { skip: process.platform === "win32" }, (t) => {
+  const result = launch(t, ["analyze", "photos"], { settings: "ANTHROPIC_API_KEY='test-key'\n" });
+
+  assert.deepEqual(result.uvOptions.slice(-2), ["--env-file", result.settingsFile]);
+});
+
+test("launcher without a saved key file names none", { skip: process.platform === "win32" }, (t) => {
+  const result = launch(t, ["analyze", "photos"]);
+
+  assert.ok(!result.uvOptions.includes("--env-file"));
 });
 
 test("launcher passes on a failing exit status", { skip: process.platform === "win32" }, (t) => {

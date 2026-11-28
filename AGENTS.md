@@ -31,6 +31,7 @@ Choose a model with `evaluate`, which reports the cheapest one meeting the accur
 ## Commands
 
 ```sh
+./setup.sh                 # interactive: tools and Claude sign-in, for the user to run
 uv sync
 uv run pytest              # exiftool tests skip when it isn't installed
 npm test                   # the npx launcher
@@ -57,5 +58,7 @@ once. `package.json` `files` lists what `npx` installs, so add new runtime files
   npm registry for that name.
 - Google Photos' API can't change the date of existing items, so new dates reach it by uploading the
   dated copies.
+- `setup.sh` comes from a wizard template: edit below its `STAGES` marker and leave the library above it.
+  The key file it writes is read by `bin/exif-dater.js`, so change the path in both.
 - `update.sh` and `find_duplicates.sh` are the owner's earlier shell scripts, kept apart from the Python
   package.

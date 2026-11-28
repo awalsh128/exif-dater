@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // The npx entry point: checks prerequisites, runs the Python app through uv and opens the browser.
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const USAGE = `usage:
@@ -30,6 +33,13 @@ function openBrowser(url) {
   opener.unref();
 }
 
+// The API key that setup.sh saves. Variables already set in the shell take priority over the file.
+function savedSettings() {
+  const config = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const file = join(config, "exif-dater", "env");
+  return existsSync(file) ? ["--env-file", file] : [];
+}
+
 function main(given) {
   if (given.length === 0 || given[0] === "--help" || given[0] === "-h") {
     console.log(USAGE);
@@ -49,14 +59,11 @@ function main(given) {
 
   const project = fileURLToPath(new URL("..", import.meta.url));
   const watchForUrl = command === "review" && open;
-  const app = spawn(
-    "uv",
-    ["run", "--quiet", "--frozen", "--no-dev", "--project", project, "exif-dater", ...args],
-    {
-      stdio: ["inherit", watchForUrl ? "pipe" : "inherit", "inherit"],
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
-    },
-  );
+  const uvArguments = ["run", "--quiet", "--frozen", "--no-dev", "--project", project, ...savedSettings()];
+  const app = spawn("uv", [...uvArguments, "exif-dater", ...args], {
+    stdio: ["inherit", watchForUrl ? "pipe" : "inherit", "inherit"],
+    env: { ...process.env, PYTHONUNBUFFERED: "1" },
+  });
 
   if (watchForUrl) {
     let output = "";

@@ -243,7 +243,9 @@ class _AppRequest(BaseHTTPRequestHandler):
 
     def _require_credentials(self) -> None:
         if not has_credentials(self.server.client):
-            raise ValueError("no Claude API credentials, set ANTHROPIC_API_KEY and restart")
+            raise ValueError(
+                "no Claude API credentials, run ./setup.sh or set ANTHROPIC_API_KEY, then restart"
+            )
 
     def _state(self) -> dict:
         server = self.server

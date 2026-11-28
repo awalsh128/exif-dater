@@ -5,23 +5,23 @@ copies of the photos. Your originals are never changed.
 
 ## First-time setup
 
-1. Install [Node.js](https://nodejs.org) 20 or later and [uv](https://docs.astral.sh/uv/). uv sets up
-   Python and the app's dependencies on the first run.
-2. Install [ImageMagick](https://imagemagick.org) (version 7, with the `magick` command) and
-   [ExifTool](https://exiftool.org). On Ubuntu or Debian:
+Clone this repository, then run the setup wizard from its folder:
 
-   ```sh
-   sudo apt install imagemagick libimage-exiftool-perl
-   magick -version   # older distributions package ImageMagick 6, which lacks this command
-   ```
+```sh
+./setup.sh
+```
 
-3. Get a [Claude API](https://platform.claude.com/docs/en/api/overview) key and set it in your shell:
+It asks before each step, installs what's missing ([ImageMagick](https://imagemagick.org),
+[ExifTool](https://exiftool.org), [Node.js](https://nodejs.org) and [uv](https://docs.astral.sh/uv/)), walks
+you through your [Claude API](https://platform.claude.com/docs/en/api/overview) account and billing, signs you
+in and checks the result. Run it again any time; it keeps what already works.
 
-   ```sh
-   export ANTHROPIC_API_KEY=...
-   ```
+To sign in, choose your browser (it installs Anthropic's
+[`ant` CLI](https://platform.claude.com/docs/en/cli-sdks-libraries/cli/quickstart)) or paste an API key. A
+pasted key is saved as plain text in `~/.config/exif-dater/env`, readable only by you, and `npx .` loads it. An
+`ANTHROPIC_API_KEY` set in your shell takes priority over both.
 
-4. Clone this repository.
+The wizard installs with `apt-get`. On other systems, install the tools it lists yourself and run it again.
 
 > [!IMPORTANT]
 > Run the app by path (`npx .`) from the cloned folder. It isn't published to npm, so a bare
