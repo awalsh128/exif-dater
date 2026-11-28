@@ -1,20 +1,18 @@
 #!/bin/bash
 
 ## Configurable ##
-ROOT_DIR=/home/awalsh128/Scanned
+ROOT_DIR=/mnt/c/Users/awals/Scanned
 # Don't make any changes
 DRY_RUN=false
-# Disable option for manual entry if automatic update fails.
-MANUAL_DISABLED=true
+# Allow for date to be entered via prompt.
+UPDATE_VIA_PROMPT_ENABLED=true
+# Allow for date to be entered via a dated filename.
+UPDATE_VIA_FILENAME_ENABLED=true
 # Preview the image before entering it or during it.
 # The image viewer will take the focus off the terminal resulting in an extra click.
-PREVIEW_BEFORE_ENTRY=true
-PREVIEW_BEFORE_ENTRY_TIME=1
+PREVIEW_BEFORE_ENTRY=false
+PREVIEW_BEFORE_ENTRY_TIME=2
 
-# Timezone offset (e.g. -08 PT)
-TZ_OFFSET="-08"
-# Image dimensions
-IMAGE_DIMENSIONS="700x700+200+100"
 # Update files that are more recent instead of updating by filename.
 SHOULD_UPDATE_DAYS_GT=356
 # Directories
@@ -22,64 +20,73 @@ PENDING_DIR="$ROOT_DIR/Pending"
 PROCESSED_DIR="$ROOT_DIR/Processed"
 ARCHIVED_DIR="$ROOT_DIR/Archived"
 
-PROPAGATED_DT_TAGS="\"-EXIF:OffsetTime*=-08:00\" -AllDates<DateTimeOriginal -FileModifyDate<DateTimeOriginal"
 # Needed for looping over filenames with spaces.
 IFS=$'\n'
+# Capture top level args that aren't reachable inside functions.
+ARG_COUNT=$#
 
 usage() {
   echo "usage: $(basename "$0") [OPTION]
 
-Read and write photo's EXIF OriginalDateTime tag.
+Read and write photo's EXIF tags related to date and description.
 
-  -a, --autoprocess     only process dated pending filenames in $PENDING_DIR
-  -b, --batch DIR DATE  batch update a directory with a single date
-  -p, --process         process pending files in $PENDING_DIR
-  -r, --review          review the processed files in $PROCESSED_DIR
-  -m, --manual FILE     manually update an individual file
-  -h, --help            display this help and exit"
+  -a, --autoprocess           only process dated pending filenames in $PENDING_DIR
+  -b, --batch DIR DATE [DESC] batch update a directory with a single date
+  -p, --process               process pending files in $PENDING_DIR
+  -r, --review                review the processed files in $PROCESSED_DIR
+  -m, --manual FILE           manually update an individual file
+  -h, --help                  display this help and exit"
 }
 
 check_arity() {
-  [[ $# == $1 ]] && error 1 "too many arguments provided -- $@"
+  if [[ -n $2 ]]; then
+    [[ $ARG_COUNT -eq $1 || $ARG_COUNT -eq $2 ]] || error 1 "incorrect arguments provided, expected $1 or $2 but got $ARG_COUNT"    
+  else
+    [[ $ARG_COUNT == $1 ]] || error 1 "incorrect arguments provided, expected $1 but got $ARG_COUNT"
+  fi
+}
+
+escape_filename() {
+  printf '%q' "$1"
 }
 
 main() {
   [[ -z $(which exiftool) ]] && error 20 "exiftool not found. Install with 'sudo apt install exiftool'."
+  [[ $# -eq 0 ]] && error 1 "no arguments provided"
 
   SHORT_OPTS=a,b,m,p,r,h
   LONG_OPTS=autoprocess,batch,manual,process,review,help
-  VALID_ARGS=$(getopt -o $SHORT_OPTS --long $LONG_OPTS -- "$@")
+  VALID_ARGS=$(getopt -o $SHORT_OPTS --long $LONG_OPTS -- "$@")  
 
-  [[ $# == 0 ]] && error 2 "no arguments provided"  
-  eval set -- "$VALID_ARGS"
-  [[ $? != 0 ]] && error 3
+  # [[ $# == 0 ]] && error 2 "no arguments provided"  
+  # eval set -- "$VALID_ARGS"
+  # [[ $? != 0 ]] && error 3
 
   for dir in "$PROCESSED_DIR" "$ARCHIVED_DIR"; do [[ ! -d $dir ]] && mkdir "$dir"; done
 
   case "$1" in
     -a | --autoprocess)
-      check_arity 0
-      process_files true # disable manual entry
+      check_arity 1
+      process_files false true # update via prompt, update via filename
       ;;
     -b | --batch)
-      check_arity 2
-      update_batch "$3" "$4" # directory, input_date
+      check_arity 3 4
+      update_batch "$2" "$3" "$4" # directory, input_date, description (optional)
       ;;
     -p | --process)
-      check_arity 0
-      process_files false
+      check_arity 1
+      process_files true true # update via prompt, update via filename
       ;;
     -m | --manual)
-      check_arity 1
-      ! [[ -f "$2" ]] && error 4 "file $2 not found"      
-      update_manually "$2" # filename
+      check_arity 2
+      [[ -f "$2" ]] || error 4 "file $2 not found"      
+      update_via_prompt "$2" # filename
       ;;
     -r | --review)
-      check_arity 0
+      check_arity 1
       review_files "$PROCESSED_DIR"
       ;;
     -h | --help)
-      [[ $# > 2 ]] && error 5 $arg_error_error
       usage
       ;;
     *)
@@ -103,29 +110,8 @@ list_files() {
   done
 }
 
-move_file() {
-  local filename=$1
-  mv "$filename" "$(print_exif_filename "$filename")" "$PROCESSED_DIR"
-  local original_filename="${filename}_original"
-  [[ -f "$original_filename" ]] && mv "$original_filename" "$ARCHIVED_DIR/$(basename "$filename")"
-}
-
-print_date_delta() {
-  local t1=$(date --date="$1" +%s)
-  local t2=$(date --date="$2" +%s)
-  local delta=$(( ($t1 - $t2 ) / (60*60*24) ))
-  echo ${delta#-}
-}
-
-print_exif_tag() {
-  local filename="$1"
-  local tag=$2
-  exiftool -s -s -s "$filename" -$tag
-}
-
-print_exif_description() {
-  local filename="$1"
-  print_exif_tag "$filename" "XMP-dc:Description"  
+print_exif_date_orig() {
+  print_exif_date_tag "$1" "DateTimeOriginal"  
 }
 
 print_exif_date_tag() {
@@ -134,18 +120,15 @@ print_exif_date_tag() {
   echo $(print_exif_tag "$filename" $tag) | awk -F" " '{print $1}' | tr ':' '-'
 }
 
-print_exif_date_orig() {
-  print_exif_date_tag "$1" "DateTimeOriginal"  
+print_exif_tag() {
+  local filename="$1"
+  local tag=$2
+  exiftool -s -s -s "$filename" -$tag
 }
 
-print_filename_date() {
-  local extensionless=$(basename "$filename" | awk -F. '{print $1}')
-  local candidate=$(echo $extensionless | awk -F'[ -]' '{print $1"-"$2"-"$3}')
-  if date "+%Y-%m-%d" -d "$candidate" &> /dev/null ; then
-    echo "$candidate"
-  else
-    echo ""
-  fi
+print_friendly_text() {
+  local value=$1
+  [[ -n "$value" ]] && echo "none" || echo $value
 }
 
 print_full_date() {
@@ -173,7 +156,7 @@ print_full_date() {
   fi
 }
 
-print_exif_filename() {
+print_processed_filename() {
   local filename=$1
   local target_dir=$2  
   local exif_date=$(print_exif_date_orig "$filename")
@@ -193,49 +176,72 @@ print_exif_filename() {
   done
 }
 
-print_friendly_text() {
-  local value=$1
-  [[ -n "$value" ]] && echo "none" || echo $value
+print_valid_date_via_filename() {
+  local filename="$1"
+  local filename_date=""
+
+  # Filename can be parsed as a date.
+  local extensionless=$(basename "$filename" | awk -F. '{print $1}')
+  local candidate=$(echo $extensionless | awk -F'[ -]' '{print $1"-"$2"-"$3}')
+  if date "+%Y-%m-%d" -d "$candidate" &> /dev/null ; then
+    filename_date="$candidate"
+  else
+    echo ""
+    return
+  fi
+
+  # Filename date is old enough. Don't interpret new dates as being reflective of the contents.
+  local t1=$(date --date="$(date +%F)" +%s)
+  local t2=$(date --date="$filename_date" +%s)
+  local delta=$(( ($t1 - $t2 ) / (60*60*24) ))
+  local delta_days=${delta#-}  
+  
+  if [[ $delta_days -gt $SHOULD_UPDATE_DAYS_GT ]]; then
+    echo "$filename_date"
+  else
+    echo ""
+  fi
 }
 
 process_file() {
   local filename=$1
-  local manual_disabled=$2
+  local update_via_prompt_enabled=$2
+  local update_via_filename_enabled=$3
 
   echo "filename          : $(basename "$filename")"
 
   local orig_exif_date=$(print_exif_date_orig "$filename")
   echo "orig exif date    : $(print_friendly_text $orig_exif_date)"
 
-  echo -n "action            : "  
-  local filename_date=$(print_filename_date "$filename")
-  if should_update "$filename_date" ; then
+  echo -n "action            : "
+  
+  local exif_date=$(print_valid_date_via_filename "$filename")
+  if [[ -z "$exif_date" ]] && [[ $update_via_filename_enabled == "true" ]]; then
     echo "update from filename"
-    update "$filename" "$filename_date" ""
-  else
-    if [[ $manual_disabled == "true" ]]; then
-      echo "skip, manual prompt disabled"
-      return
-    fi
-    echo "update from prompt"
-    update_manually "$filename"
+    update "$filename" "$exif_date" ""
+    return 0
   fi
 
-  local updated_exif_date=$(print_exif_date_orig "$filename")
-  echo "updated exif date : $(print_friendly_text $updated_exif_date)"
+  echo "update from prompt"
+  if [[ $update_via_prompt_enabled == "true" ]] && update_via_prompt "$filename" ; then
+    local processed_filename="$(print_processed_filename "$filename" "$PROCESSED_DIR")"
+    local updated_exif_date=$(print_exif_date_orig "$processed_filename")
+    echo "updated exif date : $(print_friendly_text $updated_exif_date)"
+    return 0
+  fi
 
-  move_file "$filename"  
+  return 1
 }
 
 process_files() {
-  local manual_disabled=$1  
+  local update_via_prompt_enabled=$1  
   local filenames=$(list_files $PENDING_DIR)
   if [[ -z "$filenames" ]]; then
     echo "No files found."
     return
   fi
   for filename in $filenames; do    
-    process_file "$filename" $manual_disabled
+    process_file "$filename" $update_via_prompt_enabled
     echo ""
   done
 }
@@ -252,13 +258,8 @@ review_files() {
       "$(basename "$filename")" \
       "$(print_exif_date_orig "$filename")" \
       "$(print_exif_date_tag "$filename" "FileModifyDate")" \
-      "$(print_exif_description "$filename")"
+      "$(print_exif_tag "$filename" "XMP-dc:Description")"
   done
-}
-
-should_update() {
-  local exif_date=$1
-  [[ -n "$exif_date" ]] && [[ $(print_date_delta `date +%F` $exif_date) -gt $SHOULD_UPDATE_DAYS_GT ]]
 }
 
 update() {
@@ -268,11 +269,25 @@ update() {
 
   if [[ $DRY_RUN == "true" ]]; then
     echo "skipping update, in dry run mode"
-    return
+    return 1
+  fi
+  
+  local exif_date=$(echo $date "12:00:00" | tr '-' ':')
+
+  if [[ -n "$description" ]]; then
+    exiftool -EXIF:OffsetTime*="-08:00" -AllDates="$exif_date" -FileModifyDate="$exif_date" -XMP-dc:Description="$description" "$filename" > /dev/null
+  else
+    exiftool -EXIF:OffsetTime*="-08:00" -AllDates="$exif_date" -FileModifyDate="$exif_date" "$filename" > /dev/null
   fi
 
-  update_exec "$filename" "$date" "$description" 
-  move_file "$filename"  
+  # Moved modified file to processed directory.
+  mv "$filename" "$(print_processed_filename "$filename" "$PROCESSED_DIR")"
+
+  # If the *_original file generated by exiftool is present, moved it to archive.
+  local original_filename="${filename}_original"
+  [[ -f "$original_filename" ]] && mv "$original_filename" "$ARCHIVED_DIR/$(basename "$filename")"
+
+  return 0
 }
 
 update_batch() {
@@ -293,54 +308,41 @@ update_batch() {
   done
 }
 
-update_exec() {
-  local filename=$1
-  local date=$2
-  local description=$3
-
-  local value=""
-  [[ -n "$date" ]] && value=$(echo $date "12:00:00" | tr '-' ':')
-  
-  if [[ -n "$description" ]]; then
-    exiftool -EXIF:OffsetTime*="$TZ_OFFSET:00" -AllDates="$value" -FileModifyDate="$value" -XMP-dc:Description="$description" "$filename" > /dev/null
-  else
-    exiftool -EXIF:OffsetTime*="$TZ_OFFSET:00" -AllDates="$value" -FileModifyDate="$value" "$filename" > /dev/null
-  fi
-}
-
-update_manually() {
+update_via_prompt() {
   local filename=$1
   
-  feh -x --scale-down -g $IMAGE_DIMENSIONS "$filename"&
+  feh -x --scale-down -g "700x700+200+100" "$filename"&
   local feh_pid=$!
   if [[ $PREVIEW_BEFORE_ENTRY == "true" ]]; then
     sleep $PREVIEW_BEFORE_ENTRY_TIME
     kill $feh_pid
   fi
 
+  local input_exit_code=0
   local full_date=""
   while :; do
     echo -n "enter date        : "
-    read input_date
+    read -e input_date
     if [[ -z $input_date ]]; then
+      input_exit_code=1
       break
     else
       full_date=$(print_full_date $input_date)
       if [[ -n $full_date ]]; then
-        update "$filename" "$full_date"
+        echo -n "enter description : "
+        read -e input_description
+        update "$filename" "$full_date" "$input_description"
+        input_exit_code=$?
         break
       else
         echo "error: $input_date is not a valid date"
       fi
-    fi
+    fi    
   done
 
-  echo -n "enter description : "    
-  read input_description
-
-  update "$filename" "$full_date" "$input_description"
-
+  echo ""
   [[ $PREVIEW_BEFORE_ENTRY != "true" ]] && kill $feh_pid
+  return $input_exit_code
 }
 
 ################################################################################################################################
