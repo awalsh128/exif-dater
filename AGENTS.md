@@ -58,6 +58,8 @@ once. `package.json` `files` lists what `npx` installs, so add new runtime files
 - A billing problem or rejected sign-in stops a run at the first one. The low-credit error is only
   recognizable by its message (`billing_problem` in `claude.py`).
 - `evaluate` hides file names from the model, since a name may spell out the answer.
+- `truth.csv` belongs to the owner: `truth.py` keeps their extra columns and a `truth.csv.bak` of the first
+  version. Known dates are checked by plain code and answers already cached, so checking them costs nothing.
 - The package is private and unpublished. Run it by path (`npx .`): a bare `npx exif-dater` asks the public
   npm registry for that name.
 - Google Photos' API can't change the date of existing items, so new dates reach it by uploading the

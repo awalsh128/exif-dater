@@ -50,6 +50,9 @@ def send(server, path, body=None):
         ("/api/diagnose", None),
         ("/api/check-credit", {}),
         ("/api/sign-in", {}),
+        ("/api/truth", None),
+        ("/api/truth", {"file": "a.jpg", "date": "1985", "confirmed": True}),
+        ("/api/truth/remove", {"file": "a.jpg"}),
         ("/thumbnail?file=a.jpg&token=wrong", None),
         ("/api/apply", {}),
         ("/api/analyze", {"model": "claude-haiku-5-5"}),
@@ -91,7 +94,8 @@ def finished_job(server):
 
 
 @pytest.mark.parametrize(
-    ("path", "name"), [("/", b"<title>"), ("/app.js", b"fetch("), ("/style.css", b"body")]
+    ("path", "name"),
+    [("/", b"<title>"), ("/app.js", b"fetch("), ("/style.css", b"body"), ("/icon.svg", b"<svg")],
 )
 def test_page_assets_are_served(server, path, name):
     status, body = send(server, path)
@@ -182,3 +186,68 @@ def test_sign_in_runs_as_a_task_and_reconnects(server, monkeypatch):
 
     assert (status, job["kind"], job["error"]) == (200, "sign-in", "")
     assert server.client is not before
+
+
+def known_entry(reply, file):
+    return next((entry for entry in json.loads(reply)["entries"] if entry["file"] == file), None)
+
+
+def test_truth_lists_known_dates_and_the_photos_without_one(server, write_photo):
+    write_photo("a.jpg")
+    write_photo("b.jpg")
+    (server.library.root / "truth.csv").write_text("file,date\na.jpg,\ngone.jpg,1985\n", encoding="utf-8")
+
+    status, reply = send(server, f"/api/truth?token={TOKEN}")
+
+    assert status == 200
+    assert json.loads(reply)["unlisted"] == ["b.jpg"]
+    assert "No date" in known_entry(reply, "a.jpg")["doubts"][0]
+    assert known_entry(reply, "gone.jpg")["present"] is False
+
+
+def test_truth_after_a_test_doubts_a_date_no_model_agrees_with(server, write_photo):
+    write_photo("a.jpg")
+    (server.library.root / "truth.csv").write_text("file,date\na.jpg,1960\n", encoding="utf-8")
+    send(server, f"/api/evaluate?token={TOKEN}", {"models": ["claude-haiku-5-5"], "within": 2, "target": 80})
+    finished_job(server)
+
+    _, reply = send(server, f"/api/truth?within=2&token={TOKEN}")
+
+    assert "1985" in known_entry(reply, "a.jpg")["doubts"][0]
+
+
+def test_truth_confirmation_is_saved(server, write_photo):
+    write_photo("a.jpg")
+    decision = {"file": "a.jpg", "date": "1985-06", "confirmed": True}
+
+    status, reply = send(server, f"/api/truth?token={TOKEN}", decision)
+
+    assert (status, known_entry(reply, "a.jpg")["confirmed"]) == (200, True)
+    assert "a.jpg,1985-06,yes" in (server.library.root / "truth.csv").read_text(encoding="utf-8")
+
+
+def test_truth_remove_drops_the_photo(server, write_photo):
+    write_photo("a.jpg")
+    (server.library.root / "truth.csv").write_text("file,date\na.jpg,1985\n", encoding="utf-8")
+
+    status, reply = send(server, f"/api/truth/remove?token={TOKEN}", {"file": "a.jpg"})
+
+    assert (status, known_entry(reply, "a.jpg")) == (200, None)
+
+
+def test_truth_file_without_a_header_is_bad_request(server):
+    (server.library.root / "truth.csv").write_text("a.jpg,1985\n", encoding="utf-8")
+
+    status, message = send(server, f"/api/truth?token={TOKEN}")
+
+    assert status == 400
+    assert b"header" in message
+
+
+@pytest.mark.parametrize("size", ["", "&large=1"], ids=["thumbnail", "large"])
+def test_thumbnail_of_a_photo_not_yet_analyzed_is_served(server, write_photo, size):
+    write_photo("new.jpg")
+
+    status, body = send(server, f"/thumbnail?file=new.jpg{size}&token={TOKEN}")
+
+    assert (status, body[:2]) == (200, b"\xff\xd8")

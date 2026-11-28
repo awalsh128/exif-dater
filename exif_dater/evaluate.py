@@ -1,6 +1,5 @@
 """Measure how well models date photos whose dates are already known."""
 
-import csv
 import hashlib
 import json
 import statistics
@@ -8,7 +7,6 @@ import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import date
-from pathlib import Path
 
 import anthropic
 
@@ -17,23 +15,14 @@ from exif_dater.analyze import run_requests
 from exif_dater.claude import ANALYSIS_EDGE, OBSERVE_PROMPT, Analyzer
 from exif_dater.dates import parse_photo_date
 from exif_dater.library import Library
-from exif_dater.photos import list_photos, preview
+from exif_dater.photos import preview
+from exif_dater.truth import TRUTH_FILE, Truth
 
-TRUTH_FILE = "truth.csv"
 CACHE_FILE = ".exif-dater-eval.json"
 # Below this, one photo moves a score by more than five points.
 TRUSTWORTHY_SAMPLE = 20
 # The model sees this instead of the real path, which may spell out the answer.
 BLIND_NAME = "photo.jpg"
-
-
-@dataclass
-class Truth:
-    """The known date of each photo, and where those dates came from."""
-
-    dates: dict[str, str]
-    source: str
-    from_approvals: bool = False
 
 
 @dataclass
@@ -67,34 +56,6 @@ class Report:
     answers: list[dict] = field(default_factory=list)
 
 
-def load_truth(library: Library, path: Path | None, today: date) -> Truth:
-    """Read known dates from a CSV with "file" and "date" columns.
-
-    Without a path, use truth.csv in the photo directory, or else the dates approved in review.
-    """
-    if path is None and (library.root / TRUTH_FILE).exists():
-        path = library.root / TRUTH_FILE
-    if path is None:
-        dates = {file: group.date for group in library.groups if group.approved for file in group.files}
-        truth = Truth(dates, "dates approved in review", from_approvals=True)
-    else:
-        with path.open(newline="", encoding="utf-8-sig") as table:
-            rows = csv.DictReader(table)
-            if not {"file", "date"} <= set(rows.fieldnames or []):
-                raise ValueError(f"{path.name} needs a header line with the columns file,date")
-            dates = {row["file"].strip(): (row["date"] or "").strip() for row in rows}
-        truth = Truth(dates, path.name)
-
-    if not truth.dates:
-        raise ValueError(f"no known dates: add {TRUTH_FILE} to the photo directory or approve some groups")
-    photos = set(list_photos(library.root))
-    for file, taken in truth.dates.items():
-        if file not in photos:
-            raise ValueError(f"{truth.source} names {file!r}, which isn't a photo in the directory")
-        parse_photo_date(taken, today)
-    return truth
-
-
 class Evaluation:
     """One comparison of models on photos with known dates.
 
@@ -118,6 +79,13 @@ class Evaluation:
     def pending(self) -> list[tuple[str, str]]:
         """Return the (model, file) requests that still have to be made."""
         return [item for item, key in self._keys.items() if key not in self._cache]
+
+    def cached_dates(self) -> dict[str, list[str]]:
+        """Return the dates models have already answered for each photo, without asking again."""
+        dates: dict[str, list[str]] = {}
+        for answer in self._answers():
+            dates.setdefault(answer["file"], []).append(answer["date"])
+        return dates
 
     def run(
         self,
@@ -224,6 +192,10 @@ class Evaluation:
             warnings.append(
                 "The known dates are your approvals. Where you accepted a model's proposal, the scores "
                 f"favor that model. Dates you know independently, in {TRUTH_FILE}, are a fairer test."
+            )
+        if self._truth.unconfirmed:
+            warnings.append(
+                f"{self._truth.unconfirmed} known dates aren't confirmed. Check them under Known dates."
             )
         if any(score.failed for score in scores):
             warnings.append("Some requests failed and count as misses. Run the test again to retry them.")

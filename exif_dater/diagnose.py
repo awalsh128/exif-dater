@@ -168,7 +168,10 @@ def _signed_out(title: str, detail: str) -> Finding:
 def _credit(credit: str | None) -> Finding:
     title = "API credit"
     if credit:
-        detail = f"{credit} Add credit in the same organization you signed in to, then test it."
+        detail = (
+            f"{credit} Add credit in the organization you signed in to, then test it. Max, Ultra and Team "
+            "plans include credit that you have to claim: see below."
+        )
         return Finding(title, "problem", detail, link=BILLING_URL, action="check-credit")
     if credit == "":
         return Finding(title, "ok", "A test request was accepted.")

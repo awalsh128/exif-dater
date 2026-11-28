@@ -19,7 +19,7 @@ body { display: flex; flex-direction: column; height: 100dvh; margin: 0; backgro
 
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 16px;
   background: var(--surface); border-bottom: 1px solid var(--line); }
-.brand { font-size: 18px; letter-spacing: -0.01em; }
+.brand { display: flex; align-items: center; gap: 8px; font-size: 18px; letter-spacing: -0.01em; }
 nav { display: flex; gap: 2px; padding: 3px; background: var(--page); border-radius: var(--radius); }
 nav button { border-color: transparent; background: transparent; }
 nav button[aria-pressed="true"] { background: var(--surface); border-color: var(--line); font-weight: 600; }
@@ -101,3 +101,11 @@ li.problem .mark { color: var(--problem); }
 .fixes { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
 .fixes a { color: var(--accent); }
 code { overflow-wrap: anywhere; }
+summary { cursor: pointer; font-weight: 600; }
+dialog li { margin: 4px 0; }
+.entries { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 0 14px; }
+.entries figure { width: 100%; }
+.doubts { margin: 0 0 8px; padding-left: 18px; color: var(--warning); }
+.doubts:empty { display: none; }
+dialog a { color: var(--accent); }
+dialog pre { overflow-x: auto; padding: 10px; background: var(--page); border-radius: 8px; font-size: 12px; }

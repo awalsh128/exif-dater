@@ -3,8 +3,9 @@ import json
 import pytest
 from conftest import TODAY, FakeApi, client_for
 
-from exif_dater.evaluate import Evaluation, Truth, format_report, load_truth
+from exif_dater.evaluate import Evaluation, format_report
 from exif_dater.library import Group
+from exif_dater.truth import Truth, load_truth
 
 CHEAP = "claude-haiku-5-5"
 STRONG = "claude-opus-5-5"

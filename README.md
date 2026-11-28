@@ -69,6 +69,13 @@ unless you pass `--tz`, for example `--tz -05:00`.
 To get the new dates into Google Photos, upload the copies from `dated/`. Its API can't change the date of
 photos already there, so remove the old uploads yourself.
 
+## Get API credit
+
+The API is billed apart from a Claude subscription. Max, Ultra and Team plans include monthly API credit, which
+you [claim](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers) after 7 days on the
+plan: on claude.ai, open **Settings → Billing** and link the Console organization you signed in to. Otherwise,
+buy credit on the [Console billing page](https://platform.claude.com/settings/billing).
+
 ## Choose a model
 
 The default is `claude-haiku-5-5`, the cheapest. Its accuracy on real scans hasn't been measured, so test it
@@ -80,6 +87,15 @@ file,date
 beach.jpg,1985-07
 holidays/tree.jpg,1996
 ```
+
+If dates are already right in Google Photos, a [Google Takeout](https://takeout.google.com) export can supply
+them: **?** → **Make truth.csv from Google Photos** gives the command. Scans keep their scan date there unless
+you corrected it.
+
+Under **Model quality** → **Check known dates**, look at each photo and tick **Confirmed**, fix its date or
+remove it. It points out likely mistakes: scan dates, January 1 placeholders, dates that contradict the file
+name, and, after a test, dates no model agrees with. Changes are saved to `truth.csv`; the first version is
+kept as `truth.csv.bak`. Don't change a date just to agree with a model, which would make the test meaningless.
 
 Then open **Model quality** on the page, or run:
 

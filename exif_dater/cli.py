@@ -15,9 +15,10 @@ import anthropic
 from exif_dater import prices
 from exif_dater.analyze import analyze, new_photos
 from exif_dater.claude import DEFAULT_MODEL, Analyzer, has_credentials
-from exif_dater.evaluate import Evaluation, format_report, load_truth
+from exif_dater.evaluate import Evaluation, format_report
 from exif_dater.library import Library
 from exif_dater.server import AppServer
+from exif_dater.truth import load_truth
 
 NO_CREDENTIALS = "no Claude API credentials, run ./setup.sh or set ANTHROPIC_API_KEY, then try again"
 

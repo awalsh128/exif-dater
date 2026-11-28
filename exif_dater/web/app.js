@@ -13,9 +13,9 @@ function url(path, parameters = {}) {
   return path + "?" + new URLSearchParams({ ...parameters, token });
 }
 
-async function call(path, body) {
+async function call(path, body, parameters) {
   const options = body === undefined ? {} : { method: "POST", body: JSON.stringify(body) };
-  const response = await fetch(url(path), options);
+  const response = await fetch(url(path, parameters), options);
   if (!response.ok) throw new Error(await response.text());
   return response.json();
 }
@@ -24,6 +24,18 @@ function report(message, isError = false) {
   const status = byId("status");
   status.textContent = message;
   status.className = isError ? "error" : "";
+}
+
+// Returns a function that runs saves one after another, in the order made. Each is told whether a newer
+// one is waiting, so that an older reply never overwrites what the user did since.
+function saveQueue() {
+  let last = Promise.resolve();
+  let made = 0;
+  return (save) => {
+    const mine = ++made;
+    last = last.then(() => attempt(() => save(() => mine === made)));
+    return last;
+  };
 }
 
 // Runs an action and shows its failure instead of losing it.
@@ -66,20 +78,29 @@ function card(group) {
     name: "description", value: group.description, placeholder: "Description (optional)", ariaLabel: "Description",
   });
   const approved = element("input", { type: "checkbox", checked: group.approved });
+  const written = element("span", { className: "muted" }, group.written ? "Written" : "");
+  const queue = saveQueue();
 
-  const save = async () => {
-    try {
-      state = await call("/api/review", {
-        id: group.id, date: date.value.trim(), description: description.value, approved: approved.checked,
-      });
+  const save = () => {
+    const decision = {
+      id: group.id, date: date.value.trim(), description: description.value, approved: approved.checked,
+    };
+    queue(async (isLatest) => {
+      try {
+        state = await call("/api/review", decision);
+      } catch (error) {
+        approved.checked = false;
+        throw error;
+      }
       report("");
-      // Replace only this card, so unsaved typing and the scroll position stay put.
-      section.replaceWith(card(state.groups.find((other) => other.id === group.id)));
       showSummary();
-    } catch (error) {
-      approved.checked = false;
-      report(error.message, true);
-    }
+      if (!isLatest()) return;
+      // Updated in place, so that a click already under way still lands.
+      const saved = state.groups.find((other) => other.id === group.id);
+      approved.checked = saved.approved;
+      section.classList.toggle("approved", saved.approved);
+      written.textContent = saved.written ? "Written" : "";
+    });
   };
   for (const input of [date, description, approved]) input.addEventListener("change", save);
 
@@ -105,8 +126,7 @@ function card(group) {
       ` ${group.reason}`),
     element("div", { className: "photos" }, ...photos),
     element("div", { className: "controls" },
-      date, description, element("label", {}, approved, " Approve"),
-      element("span", { className: "muted" }, group.written ? "Written" : "")));
+      date, description, element("label", {}, approved, " Approve"), written));
   return section;
 }
 
@@ -138,6 +158,104 @@ function showModels() {
     const estimate = model.cost_per_photo === null ? null : model.cost_per_photo * 100;
     return element("label", {}, box, ` ${model.id} (about ${dollars(estimate)} per 100 photos) `);
   }));
+}
+
+// Known dates to look at first: doubtful ones, then unconfirmed ones.
+function attention(entry) {
+  if (entry.confirmed) return 2;
+  return entry.doubts.length ? 0 : 1;
+}
+
+function within() {
+  return Number(byId("within").value);
+}
+
+// One queue for every card, because they all change the same file.
+const knownQueue = saveQueue();
+
+function knownCard(entry) {
+  const date = element("input", {
+    value: entry.date, placeholder: "YYYY-MM-DD", size: 12, ariaLabel: `Date of ${entry.file}`,
+  });
+  const confirmed = element("input", { type: "checkbox", checked: entry.confirmed });
+  const remove = element("button", { textContent: "Remove" });
+  const photo = element("figure", {});
+  if (entry.present) {
+    const image = element("img", { src: url("/thumbnail", { file: entry.file }), alt: entry.file,
+      loading: "lazy" });
+    // The larger copy makes printed date stamps readable.
+    photo.append(element("a", { href: url("/thumbnail", { file: entry.file, large: 1 }), target: "_blank" },
+      image));
+  }
+  photo.append(element("figcaption", {}, entry.file));
+  const doubts = element("ul", { className: "doubts" });
+  // The doubts come last, so that the controls don't move when the list changes.
+  const card = element("section", { className: "card" }, photo,
+    element("div", { className: "controls" },
+      date, element("label", {}, confirmed, " Confirmed"), remove),
+    doubts);
+  date.disabled = confirmed.disabled = !entry.present;
+
+  let saved = entry;
+  const show = () => {
+    date.value = saved.date;
+    confirmed.checked = saved.confirmed;
+    card.classList.toggle("approved", saved.confirmed);
+    doubts.replaceChildren(...saved.doubts.map((doubt) => element("li", {}, doubt)));
+  };
+  show();
+
+  const save = (isConfirmed) => {
+    const decision = { file: entry.file, date: date.value, confirmed: isConfirmed };
+    knownQueue(async (isLatest) => {
+      let known;
+      try {
+        known = await call("/api/truth", { ...decision, within: within() });
+      } catch (error) {
+        confirmed.checked = saved.confirmed;
+        throw error;
+      }
+      report("");
+      saved = known.entries.find((other) => other.file === entry.file);
+      if (isLatest()) show();
+      await showKnownSummary(known);
+    });
+  };
+  // A changed date has to be confirmed again.
+  date.addEventListener("change", () => {
+    confirmed.checked = false;
+    save(false);
+  });
+  confirmed.addEventListener("change", () => save(confirmed.checked));
+  remove.addEventListener("click", () => knownQueue(async () => {
+    const known = await call("/api/truth/remove", { file: entry.file, within: within() });
+    card.remove();
+    report("");
+    await showKnownSummary(known);
+  }));
+  return card;
+}
+
+async function showKnownSummary(known) {
+  const confirmed = known.entries.filter((entry) => entry.confirmed).length;
+  const doubtful = known.entries.filter((entry) => !entry.confirmed && entry.doubts.length).length;
+  byId("known-summary").textContent = known.entries.length
+    ? `(${confirmed} of ${known.entries.length} confirmed, ${doubtful} to look at)`
+    : "(none yet)";
+  byId("known-file").replaceChildren(...known.unlisted.map((file) => element("option", { value: file }, file)));
+  byId("known-add").disabled = !known.unlisted.length;
+  state = await call("/api/state");
+  showSummary();
+}
+
+async function showKnown(known) {
+  const sorted = [...known.entries].sort((a, b) => attention(a) - attention(b) || a.file.localeCompare(b.file));
+  byId("known-entries").replaceChildren(...sorted.map(knownCard));
+  await showKnownSummary(known);
+}
+
+async function loadKnown() {
+  await showKnown(await call("/api/truth", undefined, { within: within() }));
 }
 
 function scoreTable(result) {
@@ -217,6 +335,8 @@ async function follow(job) {
   render();
   showJob(job);
   setBusy(false);
+  // A model test gives new answers to compare the known dates with.
+  if (job?.kind === "evaluate") await loadKnown();
 }
 
 byId("analyze").addEventListener("click", () => attempt(async () => {
@@ -248,6 +368,18 @@ byId("evaluate").addEventListener("click", () => attempt(async () => {
     models, within: Number(byId("within").value), target: Number(byId("target").value),
   }));
 }));
+
+byId("known-add").addEventListener("click", () => attempt(async () => {
+  const known = await call("/api/truth", {
+    file: byId("known-file").value, date: byId("known-date").value, confirmed: false, within: within(),
+  });
+  byId("known-date").value = "";
+  report("");
+  await showKnown(known);
+}));
+
+byId("within").addEventListener("change", () => attempt(loadKnown));
+byId("show-quality").addEventListener("click", () => attempt(loadKnown));
 
 byId("job-cancel").addEventListener("click", () => attempt(() => call("/api/cancel", {})));
 
@@ -366,6 +498,10 @@ byId("job-diagnose").addEventListener("click", openHelp);
 byId("help-again").addEventListener("click", () => helpAttempt(runDiagnosis));
 byId("help-close").addEventListener("click", () => byId("help").close());
 byId("job-close").addEventListener("click", () => { byId("job").hidden = true; });
+byId("copy-takeout").addEventListener("click", () => helpAttempt(async () => {
+  await navigator.clipboard.writeText(byId("takeout-command").textContent);
+  byId("copy-takeout").textContent = "Copied";
+}));
 
 for (const view of ["review", "quality"]) {
   byId(`show-${view}`).addEventListener("click", () => {

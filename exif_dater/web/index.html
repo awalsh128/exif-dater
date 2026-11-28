@@ -5,12 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>EXIF Dater</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 <script src="app.js" defer></script>
 </head>
 <body>
 <header>
-  <strong class="brand">EXIF Dater</strong>
+  <strong class="brand"><img src="icon.svg" alt="" width="28" height="28">EXIF Dater</strong>
   <nav>
     <button id="show-review" aria-pressed="true">Review</button>
     <button id="show-quality" aria-pressed="false">Model quality</button>
@@ -41,10 +42,21 @@
 </main>
 
 <main id="quality" hidden>
-  <p>Each chosen model dates photos whose dates you already know, without seeing their file names.
-    List them in <code>truth.csv</code> in the photo directory (header <code>file,date</code>);
-    otherwise your approved groups are used.</p>
+  <p>Each chosen model dates photos whose dates you already know, without seeing their file names. They come
+    from <code>truth.csv</code> in the photo directory; without it, your approved groups are used.</p>
   <p id="truth" class="muted"></p>
+  <details id="known">
+    <summary>Check known dates <span id="known-summary" class="muted"></span></summary>
+    <p class="muted">A test is only as good as these dates. Confirm each one from something you know, such as
+      a stamp, a caption or a remembered event. Changes are saved to <code>truth.csv</code>, and the first
+      version of that file is kept as <code>truth.csv.bak</code>.</p>
+    <div class="toolbar">
+      <label>Add photo <select id="known-file"></select></label>
+      <input id="known-date" placeholder="YYYY-MM-DD" size="12" aria-label="Known date of the added photo">
+      <button id="known-add">Add</button>
+    </div>
+    <div id="known-entries" class="entries"></div>
+  </details>
   <fieldset id="comparison"><legend>Models to test</legend></fieldset>
   <div class="toolbar">
     <label>Correct means within <input id="within" type="number" min="0" value="2"> years</label>
@@ -73,6 +85,60 @@
     <button id="help-again" class="primary">Check again</button>
     <button id="help-close">Close</button>
   </div>
+
+  <details>
+    <summary>Have a Max, Ultra or Team plan? Claim your API credit</summary>
+    <p>These plans include monthly API credit (Max: $100). Free and Pro don't. The API is billed apart from
+      your subscription, so the credit does nothing until you claim it.</p>
+    <ol>
+      <li>Wait until you've been on the plan for 7 days. Until then the option doesn't appear.</li>
+      <li>On <a href="https://claude.ai" target="_blank" rel="noreferrer">claude.ai</a> in a web browser, open
+        Settings, then Billing (Team: Organization settings, then Billing).</li>
+      <li>Under API credits, link the Console organization you chose when you signed in here. You need its
+        Admin or Billing role, linking accepts the program terms, and only support can change the link.</li>
+      <li>Find the amount under Promotional credits on the
+        <a href="https://platform.claude.com/settings/billing" target="_blank" rel="noreferrer">Console
+        billing page</a>, then choose Test credit above.</li>
+    </ol>
+    <p>No payment method is needed. Unused credit expires each billing cycle. If you can't wait, buy credit on
+      the Console billing page.
+      <a href="https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers" target="_blank"
+        rel="noreferrer">Anthropic's guide</a></p>
+  </details>
+
+  <details>
+    <summary>Prepare your photos (no credit needed)</summary>
+    <ul>
+      <li>Put only your scans in their own folder, and start the app with it. Analyzing sends every photo in
+        the folder that isn't dated by name.</li>
+      <li>Start the names of photos you can date with the date, such as <code>1987 beach.jpg</code>. They are
+        read without using the API.</li>
+      <li>For the model test, add 20 or more dates you know under Model quality, then Check known dates. They
+        are saved to <code>truth.csv</code> in that folder, which you can also write by hand with the header
+        <code>file,date</code>.</li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>Make truth.csv from Google Photos</summary>
+    <p>This helps only with photos whose dates are right in Google Photos. A scan keeps its scan date unless
+      you corrected it.</p>
+    <ol>
+      <li>At <a href="https://takeout.google.com" target="_blank" rel="noreferrer">Google Takeout</a>, export
+        Google Photos, and unzip it into a new folder used only for testing.</li>
+      <li>In that folder, run this command. Change 2025-01-01 to the day you started scanning, so that scan
+        dates are left out. It replaces any <code>truth.csv</code> there.</li>
+    </ol>
+<pre id="takeout-command">(echo file,date
+exiftool -q -q -r -ext json \
+  -if "\$PhotoTakenTimeTimestamp and \$PhotoTakenTimeTimestamp &lt; $(date -d 2025-01-01 +%s)" \
+  -if '-e "$Directory/$Title"' \
+  -p '"$Directory/$Title",${PhotoTakenTimeTimestamp;$_=ConvertUnixTime($_);s/ .*//;tr/:/-/}' . |
+  sed 's|^"\./|"|') > truth.csv</pre>
+    <button id="copy-takeout">Copy command</button>
+    <p>Keep 20 to 50 rows of scanned prints, and shorten a date to the year if you guessed its month. Then test
+      that folder: <code>npx . evaluate &lt;folder&gt;</code>. Don't analyze it, which would send every photo.</p>
+  </details>
 </dialog>
 </body>
 </html>

@@ -1,4 +1,4 @@
-"""The local web front end: analyze photos, approve dates, write copies, test models and fix problems."""
+"""The local web front end: analyze, approve and write dates, check known dates, test models and diagnose."""
 
 import hmac
 import json
@@ -16,12 +16,13 @@ import anthropic
 from exif_dater import prices
 from exif_dater.analyze import analyze, new_photos
 from exif_dater.apply import apply
-from exif_dater.claude import DEFAULT_MODEL, Analyzer, billing_problem, has_credentials
+from exif_dater.claude import ANALYSIS_EDGE, DEFAULT_MODEL, Analyzer, billing_problem, has_credentials
 from exif_dater.dates import date_from_name
 from exif_dater.diagnose import check_credit, diagnose, sign_in
-from exif_dater.evaluate import Evaluation, load_truth
+from exif_dater.evaluate import Evaluation
 from exif_dater.library import Library
-from exif_dater.photos import OUTPUT_DIR, preview
+from exif_dater.photos import OUTPUT_DIR, list_photos, preview
+from exif_dater.truth import Truth, doubts, load_truth, read_entries, remove_entry, set_entry
 
 THUMBNAIL_EDGE = 640
 
@@ -30,6 +31,7 @@ _ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/icon.svg": ("icon.svg", "image/svg+xml"),
 }
 
 Work = Callable[[Callable[[str], None], threading.Event], object]
@@ -156,8 +158,17 @@ class _AppRequest(BaseHTTPRequestHandler):
             self._reply_json(job.state() if job else None)
         elif path == "/api/diagnose":
             self._reply_json(self._diagnosis())
+        elif path == "/api/truth":
+            try:
+                with self.server.lock:
+                    known = self._known_dates(query)
+            except (OSError, ValueError) as error:
+                self._reply_error(str(error), HTTPStatus.BAD_REQUEST)
+                return
+            self._reply_json(known)
         elif path == "/thumbnail":
-            self._thumbnail(query.get("file", ""))
+            edge = ANALYSIS_EDGE if "large" in query else THUMBNAIL_EDGE
+            self._thumbnail(query.get("file", ""), edge)
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -175,6 +186,8 @@ class _AppRequest(BaseHTTPRequestHandler):
             "/api/cancel": self._cancel,
             "/api/sign-in": self._sign_in,
             "/api/check-credit": self._check_credit,
+            "/api/truth": self._set_truth,
+            "/api/truth/remove": self._remove_truth,
         }
         if path not in actions:
             self.send_error(HTTPStatus.NOT_FOUND)
@@ -296,6 +309,39 @@ class _AppRequest(BaseHTTPRequestHandler):
         )
         return [asdict(finding) for finding in findings]
 
+    def _set_truth(self, body: dict) -> dict:
+        server = self.server
+        set_entry(server.library, body["file"], body["date"], bool(body["confirmed"]), server.today())
+        return self._known_dates(body)
+
+    def _remove_truth(self, body: dict) -> dict:
+        remove_entry(self.server.library, body["file"])
+        return self._known_dates(body)
+
+    def _known_dates(self, choices: dict) -> dict:
+        """The known dates with the reasons to doubt each, and the photos that have none."""
+        server = self.server
+        today = server.today()
+        within = int(choices.get("within", 2))
+        entries, source = read_entries(server.library)
+        photos = list_photos(server.library.root)
+        present = set(photos)
+        # Answers from earlier tests, which cost nothing to look at again.
+        usable = {entry.file: entry.date for entry in entries if entry.file in present}
+        estimates = Evaluation(
+            server.library, Truth(usable, source), prices.LISTED_MODELS, server.notes
+        ).cached_dates()
+        checked = []
+        for entry in entries:
+            if entry.file in present:
+                found = doubts(entry, today, estimates.get(entry.file, []), within)
+            else:
+                found = ["Not in the photo folder. Remove it."]
+            checked.append(asdict(entry) | {"present": entry.file in present, "doubts": found})
+        listed = {entry.file for entry in entries}
+        unlisted = [file for file in photos if file not in listed]
+        return {"source": source, "entries": checked, "unlisted": unlisted}
+
     def _listed(self, model: str) -> str:
         # The page offers only priced models, so its cost estimates always apply.
         if model not in prices.LISTED_MODELS:
@@ -338,13 +384,13 @@ class _AppRequest(BaseHTTPRequestHandler):
     def _authorized(self, query: dict[str, str]) -> bool:
         return hmac.compare_digest(query.get("token", "").encode(), self.server.token.encode())
 
-    def _thumbnail(self, file: str) -> None:
-        # Only photos the library knows about, so a request can't name any other file.
-        if file not in self.server.library.observations:
+    def _thumbnail(self, file: str, edge: int) -> None:
+        # Only photos found in the directory, so a request can't name any other file.
+        if file not in list_photos(self.server.library.root):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         try:
-            jpeg = preview(self.server.library.root / file, THUMBNAIL_EDGE)
+            jpeg = preview(self.server.library.root / file, edge)
         except (OSError, RuntimeError):
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "cannot render this photo")
             return
